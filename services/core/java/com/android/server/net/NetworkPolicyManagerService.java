@@ -397,10 +397,6 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
     private static final int LINEAGE_VERSION_REINSTATED_POLICY_REJECT_ALL = 2;
     private static final int LINEAGE_VERSION_LATEST = LINEAGE_VERSION_REINSTATED_POLICY_REJECT_ALL;
 
-    private static final int LINEAGE_VERSION_INIT = 1;
-    private static final int LINEAGE_VERSION_REINSTATED_POLICY_REJECT_ALL = 2;
-    private static final int LINEAGE_VERSION_LATEST = LINEAGE_VERSION_REINSTATED_POLICY_REJECT_ALL;
-
     @VisibleForTesting
     public static final int TYPE_WARNING = SystemMessage.NOTE_NET_WARNING;
     @VisibleForTesting

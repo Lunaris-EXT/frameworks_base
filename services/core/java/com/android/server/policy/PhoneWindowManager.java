@@ -796,10 +796,6 @@ public class PhoneWindowManager implements WindowManagerPolicy {
 
     private LineageButtons mLineageButtons;
 
-    private final List<DeviceKeyHandler> mDeviceKeyHandlers = new ArrayList<>();
-
-    private LineageButtons mLineageButtons;
-
     private final boolean mVisibleBackgroundUsersEnabled = isVisibleBackgroundUsersEnabled();
 
     private static final int MSG_DISPATCH_MEDIA_KEY_WITH_WAKE_LOCK = 3;

@@ -31,6 +31,7 @@ import static com.android.server.wallpaper.WallpaperUtils.getWallpaperDir;
 import android.annotation.NonNull;
 import android.app.WallpaperManager;
 import android.content.Context;
+import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.ImageDecoder;
