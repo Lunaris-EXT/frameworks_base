@@ -16,9 +16,7 @@
 
 package com.android.systemui.qs.panels.ui.viewmodel
 
-import androidx.compose.runtime.getValue
-import com.android.systemui.lifecycle.ExclusiveActivatable
-import com.android.systemui.lifecycle.Hydrator
+import com.android.systemui.lifecycle.HydratedActivatable
 import com.android.systemui.qs.panels.domain.interactor.GridLayoutTypeInteractor
 import com.android.systemui.qs.panels.shared.model.GridLayoutType
 import com.android.systemui.qs.panels.ui.compose.GridLayout
@@ -36,36 +34,20 @@ constructor(
     gridLayoutMap: Map<GridLayoutType, @JvmSuppressWildcards GridLayout>,
     tilesInteractor: CurrentTilesInteractor,
     @Named("Default") defaultGridLayout: GridLayout,
-) : ExclusiveActivatable() {
-
-    private val hydrator = Hydrator("TileGridViewModel")
+) : HydratedActivatable() {
 
     val gridLayout by
-        hydrator.hydratedStateOf(
-            traceName = "gridLayout",
-            source = gridLayoutTypeInteractor.layout.map { gridLayoutMap[it] ?: defaultGridLayout },
-            initialValue = defaultGridLayout,
-        )
+        gridLayoutTypeInteractor.layout
+            .map { gridLayoutMap[it] ?: defaultGridLayout }
+            .hydratedStateOf(initialValue = defaultGridLayout)
 
-    private val tileModels by
-        hydrator.hydratedStateOf(traceName = "tileModels", source = tilesInteractor.currentTiles)
+    private val tileModels by tilesInteractor.currentTiles.hydratedStateOf()
 
     private var cachedTileModels: List<TileModel> = emptyList()
     private var cachedTileViewModels: List<TileViewModel> = emptyList()
 
     val tileViewModels: List<TileViewModel>
-        get() {
-            val current = tileModels
-            if (current !== cachedTileModels) {
-                cachedTileModels = current
-                cachedTileViewModels = current.map { TileViewModel(it.tile, it.spec) }
-            }
-            return cachedTileViewModels
-        }
-
-    override suspend fun onActivated(): Nothing {
-        hydrator.activate()
-    }
+        get() = tileModels.map { TileViewModel(it.tile, it.spec, it.expandable) }
 
     @AssistedFactory
     interface Factory {

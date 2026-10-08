@@ -21,21 +21,13 @@ import android.graphics.drawable.GradientDrawable
 import android.os.UserHandle
 import android.provider.Settings
 import android.util.AttributeSet
-import android.view.Gravity.CENTER_VERTICAL
-import android.view.Gravity.END
 import android.view.ViewGroup
-import android.view.ViewGroup.LayoutParams.MATCH_PARENT
-import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-import android.view.accessibility.AccessibilityNodeInfo
-import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import androidx.annotation.VisibleForTesting
 import com.android.settingslib.Utils
 import com.android.systemui.Flags
 import com.android.systemui.res.R
-import com.android.systemui.statusbar.events.BackgroundAnimatableView
-import java.time.Duration
 
 class OngoingPrivacyChip
 @JvmOverloads
@@ -44,7 +36,7 @@ constructor(
     attrs: AttributeSet? = null,
     defStyleAttrs: Int = 0,
     defStyleRes: Int = 0,
-) : FrameLayout(context, attrs, defStyleAttrs, defStyleRes), BackgroundAnimatableView {
+) : AbstractOngoingPrivacyChip(context, attrs, defStyleAttrs, defStyleRes) {
 
     private var configuration: Configuration
     private var iconMargin = 0
@@ -53,15 +45,10 @@ constructor(
     private var chipDrawable: GradientDrawable? = null
 
     @VisibleForTesting val iconsContainer: LinearLayout
-    val launchableContentView
+    override val launchableContentView
         get() = iconsContainer
 
-    private val locationIndicatorsEnabled
-        get() = Settings.Secure.getIntForUser(context.contentResolver,
-            Settings.Secure.ENABLE_LOCATION_PRIVACY_INDICATOR, 1,
-            UserHandle.USER_CURRENT) == 1
-
-    var privacyList = emptyList<PrivacyItem>()
+    override var privacyList = emptyList<PrivacyItem>()
         set(value) {
             field = value
             updateView(PrivacyChipBuilder(context, field))
@@ -80,10 +67,6 @@ constructor(
 
     init {
         inflate(context, R.layout.ongoing_privacy_chip, this)
-        id = R.id.privacy_chip
-        layoutParams = LayoutParams(WRAP_CONTENT, MATCH_PARENT, CENTER_VERTICAL or END)
-        clipChildren = true
-        clipToPadding = true
         iconsContainer = requireViewById(R.id.icons_container)
         configuration = Configuration(context.resources.configuration)
         updateResources()
@@ -97,13 +80,6 @@ constructor(
      */
     override fun setBoundsForAnimation(l: Int, t: Int, r: Int, b: Int) {
         iconsContainer.setLeftTopRightBottom(l - left, t - top, r - left, b - top)
-    }
-
-    override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
-        super.onInitializeAccessibilityNodeInfo(info)
-        if (Flags.privacyDotLiveRegion()) {
-            info.setMinDurationBetweenContentChanges(Duration.ofSeconds(10L))
-        }
     }
 
     // Should only be called if the builder icons or app changed
@@ -141,12 +117,6 @@ constructor(
         requestLayout()
     }
 
-    private fun generateContentDescription(builder: PrivacyChipBuilder) {
-        val typesText = builder.joinTypes()
-        contentDescription =
-            context.getString(R.string.ongoing_privacy_chip_content_multiple_apps, typesText)
-    }
-
     override fun onConfigurationChanged(newConfig: Configuration?) {
         super.onConfigurationChanged(newConfig)
         if (newConfig != null) {
@@ -170,11 +140,9 @@ constructor(
             context.resources.getDimensionPixelSize(R.dimen.ongoing_appops_chip_side_padding)
         iconsContainer.layoutParams.height = height
         iconsContainer.setPaddingRelative(padding, 0, padding, 0)
-        if (Flags.fixShadeHeaderWrongIconSize()) {
-            iconsContainer.minimumWidth =
-                context.resources.getDimensionPixelSize(R.dimen.ongoing_appops_chip_min_width)
-        }
-        if (locationIndicatorsEnabled) {
+        iconsContainer.minimumWidth =
+            context.resources.getDimensionPixelSize(R.dimen.ongoing_appops_chip_min_width)
+        if (locationIndicatorsEnabled()) {
             if (chipDrawable == null) {
                 chipDrawable =
                     context.getDrawable(R.drawable.statusbar_privacy_chip_bg)?.mutate()
@@ -188,5 +156,9 @@ constructor(
         } else {
             iconsContainer.background = context.getDrawable(R.drawable.statusbar_privacy_chip_bg)
         }
+    }
+
+    private fun generateContentDescription(builder: PrivacyChipBuilder) {
+        setContentDescriptions(builder.joinTypes())
     }
 }

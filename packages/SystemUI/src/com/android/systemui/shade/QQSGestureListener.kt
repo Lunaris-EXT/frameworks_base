@@ -19,15 +19,11 @@ package com.android.systemui.shade
 import android.content.Context
 import android.database.ContentObserver
 import android.os.PowerManager
-import android.os.UserHandle
-import android.provider.Settings
 import android.view.GestureDetector
 import android.view.MotionEvent
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.plugins.statusbar.StatusBarStateController
-import com.android.systemui.user.domain.interactor.SelectedUserInteractor
-import com.android.systemui.power.domain.interactor.PowerInteractor
 import com.android.systemui.statusbar.StatusBarState
 import com.android.systemui.statusbar.phone.CentralSurfaces
 import lineageos.providers.LineageSettings
@@ -39,36 +35,24 @@ class QQSGestureListener @Inject constructor(
         private val falsingManager: FalsingManager,
         private val powerManager: PowerManager,
         private val statusBarStateController: StatusBarStateController,
-        private val selectedUserInteractor: SelectedUserInteractor,
         private val centralSurfaces: CentralSurfaces,
-        private val powerInteractor: PowerInteractor,
 ) : GestureDetector.SimpleOnGestureListener() {
 
     private var doubleTapToSleepEnabled = false
-    private var lockscreenDT2SEnabled = false
     private val quickQsOffsetHeight: Int
 
     init {
         val contentObserver = object : ContentObserver(null) {
             override fun onChange(selfChange: Boolean) {
-                doubleTapToSleepEnabled = LineageSettings.System.getIntForUser(
+                doubleTapToSleepEnabled = LineageSettings.System.getInt(
                         context.contentResolver, LineageSettings.System.DOUBLE_TAP_SLEEP_GESTURE,
                         if (context.resources.getBoolean(org.lineageos.platform.internal.
-                                R.bool.config_dt2sGestureEnabledByDefault)) 1 else 0,
-                    selectedUserInteractor.getSelectedUserId()) != 0
-                lockscreenDT2SEnabled = Settings.System.getIntForUser(
-                        context.contentResolver, Settings.System.DOUBLE_TAP_SLEEP_LOCKSCREEN,
-                        if (context.resources.getBoolean(org.lineageos.platform.internal.
-                                R.bool.config_dt2sGestureEnabledByDefault)) 1 else 0,
-                    selectedUserInteractor.getSelectedUserId()) != 0
+                                R.bool.config_dt2sGestureEnabledByDefault)) 1 else 0) != 0
             }
         }
         context.contentResolver.registerContentObserver(
                 LineageSettings.System.getUriFor(LineageSettings.System.DOUBLE_TAP_SLEEP_GESTURE),
-                false, contentObserver, UserHandle.USER_ALL)
-        context.contentResolver.registerContentObserver(
-                Settings.System.getUriFor(Settings.System.DOUBLE_TAP_SLEEP_LOCKSCREEN),
-                false, contentObserver, UserHandle.USER_ALL)
+                false, contentObserver)
         contentObserver.onChange(true)
 
         quickQsOffsetHeight = context.resources.getDimensionPixelSize(
@@ -76,21 +60,16 @@ class QQSGestureListener @Inject constructor(
     }
 
     override fun onDoubleTapEvent(e: MotionEvent): Boolean {
-        // Go to sleep on double tap the QQS status bar
-        if (e.actionMasked == MotionEvent.ACTION_UP &&
+        // Go to sleep when double tapping the QQS status bar
+        // or lockscreen (keyguard showing, but not bouncer)
+        if (
+            e.actionMasked == MotionEvent.ACTION_UP &&
                 !statusBarStateController.isDozing &&
                 doubleTapToSleepEnabled &&
-                e.getY() < quickQsOffsetHeight &&
+                (e.getY() < quickQsOffsetHeight ||
+                    statusBarStateController.getState() == StatusBarState.KEYGUARD &&
+                        !centralSurfaces.isBouncerShowing()) &&
                 !falsingManager.isFalseDoubleTap
-        ) {
-            powerInteractor.setLastTouchToSleepPosition(e.x, e.y)
-            powerManager.goToSleep(e.eventTime,
-                PowerManager.GO_TO_SLEEP_REASON_TOUCH, 0)
-            return true
-        } else if (!statusBarStateController.isDozing &&
-            lockscreenDT2SEnabled &&
-            statusBarStateController.getState() == StatusBarState.KEYGUARD &&
-            !centralSurfaces.isBouncerShowing()            
         ) {
             powerManager.goToSleep(e.getEventTime())
             return true

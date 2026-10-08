@@ -63,7 +63,6 @@ import com.android.systemui.shade.ShadeController;
 import com.android.systemui.shared.system.QuickStepContract;
 import com.android.systemui.statusbar.NotificationLockscreenUserManager;
 import com.android.systemui.statusbar.NotificationShadeWindowController;
-import com.android.systemui.statusbar.notification.NotifPipelineFlags;
 import com.android.systemui.statusbar.notification.NotificationChannelHelper;
 import com.android.systemui.statusbar.notification.collection.EntryAdapter;
 import com.android.systemui.statusbar.notification.collection.NotifCollection;
@@ -117,7 +116,6 @@ public class BubblesManager {
     private final SensitiveNotificationProtectionController mSensitiveNotifProtectionController;
     private final CommonNotifCollection mCommonNotifCollection;
     private final NotifPipeline mNotifPipeline;
-    private final NotifPipelineFlags mNotifPipelineFlags;
     private final Executor mSysuiMainExecutor;
     private final Executor mSysuiUiBgExecutor;
 
@@ -152,7 +150,6 @@ public class BubblesManager {
             NotifPipeline notifPipeline,
             SysUiState sysUiState,
             FeatureFlags featureFlags,
-            NotifPipelineFlags notifPipelineFlags,
             Executor sysuiMainExecutor,
             Executor sysuiUiBgExecutor) {
         if (bubblesOptional.isPresent()) {
@@ -174,7 +171,6 @@ public class BubblesManager {
                     notifPipeline,
                     sysUiState,
                     featureFlags,
-                    notifPipelineFlags,
                     sysuiMainExecutor,
                     sysuiUiBgExecutor);
         } else {
@@ -201,7 +197,6 @@ public class BubblesManager {
             NotifPipeline notifPipeline,
             SysUiState sysUiState,
             FeatureFlags featureFlags,
-            NotifPipelineFlags notifPipelineFlags,
             Executor sysuiMainExecutor,
             Executor sysuiUiBgExecutor) {
         mContext = context;
@@ -218,7 +213,6 @@ public class BubblesManager {
         mSensitiveNotifProtectionController = sensitiveNotificationProtectionController;
         mCommonNotifCollection = notifCollection;
         mNotifPipeline = notifPipeline;
-        mNotifPipelineFlags = notifPipelineFlags;
         mSysuiMainExecutor = sysuiMainExecutor;
         mSysuiUiBgExecutor = sysuiUiBgExecutor;
 

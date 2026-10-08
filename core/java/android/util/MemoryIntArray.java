@@ -21,6 +21,7 @@ import android.os.Parcel;
 import android.os.ParcelFileDescriptor;
 import android.os.Parcelable;
 
+import dalvik.annotation.optimization.FastNative;
 import dalvik.system.CloseGuard;
 
 import libcore.io.IoUtils;
@@ -111,10 +112,12 @@ public final class MemoryIntArray implements Parcelable, Closeable {
      * @return The value at this index.
      * @throws IOException If an error occurs while accessing the shared memory.
      */
+    // TODO(b/441345470): Remove the checked IOException after updating all callers, as we
+    // no longer throw from native.
     public int get(int index) throws IOException {
         enforceNotClosed();
         enforceValidIndex(index);
-        return nativeGet(mFd, mMemoryAddr, index);
+        return nativeGet(mMemoryAddr, index);
     }
 
     /**
@@ -126,11 +129,13 @@ public final class MemoryIntArray implements Parcelable, Closeable {
      * @param value The value to set.
      * @throws IOException If an error occurs while accessing the shared memory.
      */
+    // TODO(b/441345470): Remove the checked IOException after updating all callers, as we
+    // no longer throw from native.
     public void set(int index, int value) throws IOException {
         enforceNotClosed();
         enforceWritable();
         enforceValidIndex(index);
-        nativeSet(mFd, mMemoryAddr, index, value);
+        nativeSet(mMemoryAddr, index, value);
     }
 
     /**
@@ -149,7 +154,7 @@ public final class MemoryIntArray implements Parcelable, Closeable {
     @Override
     public void close() throws IOException {
         if (!isClosed()) {
-            nativeClose(mFd, mMemoryAddr, mIsOwner, mSize);
+            nativeClose(mFd, mMemoryAddr, mSize);
             mFd = -1;
             mCloseGuard.close();
         }
@@ -232,9 +237,11 @@ public final class MemoryIntArray implements Parcelable, Closeable {
     // The same explicit size should always be passed to nativeOpen() and nativeClose() to ensure
     // consistency between mmap() and munmap().
     private native long nativeOpen(int fd, boolean owner, int size);
-    private native void nativeClose(int fd, long memoryAddr, boolean owner, int size);
-    private native int nativeGet(int fd, long memoryAddr, int index);
-    private native void nativeSet(int fd, long memoryAddr, int index, int value);
+    private native void nativeClose(int fd, long memoryAddr, int size);
+    @FastNative
+    private native int nativeGet(long memoryAddr, int index);
+    @FastNative
+    private native void nativeSet(long memoryAddr, int index, int value);
     private native int nativeSize(int fd);
 
     /**

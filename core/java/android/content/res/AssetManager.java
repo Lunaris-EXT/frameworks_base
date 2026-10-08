@@ -84,8 +84,7 @@ public final class AssetManager implements AutoCloseable {
     public static final String FRAMEWORK_APK_PATH = getFrameworkApkPath();
     private static final String FRAMEWORK_APK_PATH_DEVICE = "/system/framework/framework-res.apk";
     private static final String FRAMEWORK_APK_PATH_RAVENWOOD = "ravenwood-data/framework-res.apk";
-    private static final String PLATFORM_EXT_APK_PATH =
-            "/system/framework/org.lineageos.platform-res.apk";
+    private static final String LINEAGE_APK_PATH = "/system/framework/org.lineageos.platform-res.apk";
 
     private static final Object sSync = new Object();
 
@@ -293,7 +292,7 @@ public final class AssetManager implements AutoCloseable {
             for (String idmapPath : systemIdmapPaths) {
                 apkAssets.add(ApkAssets.loadOverlayFromPath(idmapPath, ApkAssets.PROPERTY_SYSTEM));
             }
-            apkAssets.add(ApkAssets.loadFromPath(PLATFORM_EXT_APK_PATH, ApkAssets.PROPERTY_SYSTEM));
+            apkAssets.add(ApkAssets.loadFromPath(LINEAGE_APK_PATH, ApkAssets.PROPERTY_SYSTEM));
 
             sSystemApkAssetsSet = new ArraySet<>(apkAssets);
             sSystemApkAssets = apkAssets.toArray(new ApkAssets[0]);
@@ -608,7 +607,6 @@ public final class AssetManager implements AutoCloseable {
 
     /** @hide */
     @NonNull
-    @RavenwoodThrow(blockedBy = ResourcesLoader.class)
     public List<ResourcesLoader> getLoaders() {
         return mLoaders == null ? Collections.emptyList() : Arrays.asList(mLoaders);
     }
@@ -1572,22 +1570,17 @@ public final class AssetManager implements AutoCloseable {
     }
 
     /**
+     * Return a subset of the fields of the resource configurations, including
+     * smallestScreenWidthDp, screenWidthDp, screenHeightDp, screenLayout, uiMode, keyboard,
+     * navigation, touchscreen and colorMode.
+     * Please note that this does not return all resource configurations.
+     *
      * @hide
      */
-    Configuration[] getSizeConfigurations() {
+    Configuration[] getResourceConfigurations() {
         synchronized (this) {
             ensureValidLocked();
-            return nativeGetSizeConfigurations(mObject);
-        }
-    }
-
-    /**
-     * @hide
-     */
-    Configuration[] getSizeAndUiModeConfigurations() {
-        synchronized (this) {
-            ensureValidLocked();
-            return nativeGetSizeAndUiModeConfigurations(mObject);
+            return nativeGetResourceConfigurations(mObject);
         }
     }
 
@@ -1786,8 +1779,7 @@ public final class AssetManager implements AutoCloseable {
     private static native @Nullable String nativeGetResourceTypeName(long ptr, @AnyRes int resid);
     private static native @Nullable String nativeGetResourceEntryName(long ptr, @AnyRes int resid);
     private static native @Nullable String[] nativeGetLocales(long ptr, boolean excludeSystem);
-    private static native @Nullable Configuration[] nativeGetSizeConfigurations(long ptr);
-    private static native @Nullable Configuration[] nativeGetSizeAndUiModeConfigurations(long ptr);
+    private static native @Nullable Configuration[] nativeGetResourceConfigurations(long ptr);
     private static native void nativeSetResourceResolutionLoggingEnabled(long ptr, boolean enabled);
     private static native @Nullable String nativeGetLastResourceResolution(long ptr);
 

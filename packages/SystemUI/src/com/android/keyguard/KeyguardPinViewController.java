@@ -19,6 +19,7 @@ package com.android.keyguard;
 import static com.android.systemui.flags.Flags.LOCKSCREEN_ENABLE_LANDSCAPE;
 
 import android.hardware.input.InputManager;
+import android.uilatencystats.UiLatencyStatsManager;
 import android.view.View;
 
 import com.android.internal.logging.UiEvent;
@@ -36,6 +37,9 @@ import com.android.systemui.user.domain.interactor.SelectedUserInteractor;
 import com.android.systemui.util.wrapper.LockPatternCheckerWrapper;
 
 import lineageos.providers.LineageSettings;
+
+import java.time.Duration;
+import java.util.Optional;
 
 public class KeyguardPinViewController
         extends KeyguardPinBasedInputViewController<KeyguardPINView> {
@@ -69,13 +73,14 @@ public class KeyguardPinViewController
             BouncerHapticPlayer bouncerHapticPlayer,
             UserActivityNotifier userActivityNotifier,
             InputManager inputManager,
-            LockPatternCheckerWrapper lockPatternCheckerWrapper
+            LockPatternCheckerWrapper lockPatternCheckerWrapper,
+            Optional<UiLatencyStatsManager> uiLatencyStatsManager
     ) {
         super(view, keyguardUpdateMonitor, securityMode, lockPatternUtils, keyguardSecurityCallback,
                 messageAreaControllerFactory, latencyTracker,
                 emergencyButtonController, falsingCollector, featureFlags, selectedUserInteractor,
                 keyguardKeyboardInteractor, bouncerHapticPlayer, userActivityNotifier, inputManager,
-                lockPatternCheckerWrapper
+                lockPatternCheckerWrapper, uiLatencyStatsManager
         );
         mKeyguardUpdateMonitor = keyguardUpdateMonitor;
         mPostureController = postureController;
@@ -102,9 +107,7 @@ public class KeyguardPinViewController
         mView.onDevicePostureChanged(mPostureController.getDevicePosture());
         mPostureController.addCallback(mPostureCallback);
         mPasswordEntry.setUsePinShapes(true);
-        if (isAutoPinConfirmEnabledInSettings()) {
-            updateAutoConfirmationState();
-        }
+        updateAutoConfirmationState();
         mView.updatePinScrambling(
                 LineageSettings.System.getIntForUser(getContext().getContentResolver(),
                         LineageSettings.System.LOCKSCREEN_PIN_SCRAMBLE_LAYOUT, 0,
@@ -145,11 +148,9 @@ public class KeyguardPinViewController
     }
 
     @Override
-    protected void handleAttemptLockout(long elapsedRealtimeDeadline) {
-        super.handleAttemptLockout(elapsedRealtimeDeadline);
-        if (isAutoPinConfirmEnabledInSettings()) {
-            updateAutoConfirmationState();
-        }
+    protected void handleAttemptLockout(Duration lockoutEndTime) {
+        super.handleAttemptLockout(lockoutEndTime);
+        updateAutoConfirmationState();
     }
 
     private void updateAutoConfirmationState() {

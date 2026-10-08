@@ -25,12 +25,12 @@ import static com.android.internal.telephony.SmsConstants.MAX_USER_DATA_BYTES;
 import static com.android.internal.telephony.SmsConstants.MAX_USER_DATA_SEPTETS;
 import static com.android.internal.telephony.SmsConstants.MessageClass;
 
-import android.app.ActivityThread;
+import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.content.res.Resources;
 import android.os.Build;
-import android.provider.Settings;
+import android.telephony.NetworkSecurityEvent;
 import android.telephony.PhoneNumberUtils;
 import android.text.TextUtils;
 
@@ -93,6 +93,9 @@ public class SmsMessage extends SmsMessageBase {
      */
     private boolean mIsStatusReportMessage = false;
 
+    @Nullable
+    private NetworkSecurityEvent mNetworkSecurityEvent;
+
     private int mVoiceMailCount = 0;
 
     /** TP-Validity-Period-Format (TP-VPF). See TS 23.040, 9.2.3.3 */
@@ -118,13 +121,17 @@ public class SmsMessage extends SmsMessageBase {
     }
 
     /**
-     * Create an SmsMessage from a raw PDU.
+     * Create an SmsMessage from a raw PDU with an associated network security event.
+     *
+     * @param pdu The PDU to parse.
+     * @param event The associated network security event. May be null.
+     * @return An SmsMessage object.
      */
-    @UnsupportedAppUsage
-    public static SmsMessage createFromPdu(byte[] pdu) {
+    public static SmsMessage createFromPdu(byte[] pdu, @Nullable NetworkSecurityEvent event) {
         try {
             SmsMessage msg = new SmsMessage();
             msg.parsePdu(pdu);
+            msg.mNetworkSecurityEvent = event;
             return msg;
         } catch (RuntimeException ex) {
             Rlog.e(LOG_TAG, "SMS PDU parsing failed: ", ex);
@@ -133,6 +140,14 @@ public class SmsMessage extends SmsMessageBase {
             Rlog.e(LOG_TAG, "SMS PDU parsing failed with out of memory: ", e);
             return null;
         }
+    }
+
+    /**
+     * Create an SmsMessage from a raw PDU.
+     */
+    @UnsupportedAppUsage
+    public static SmsMessage createFromPdu(byte[] pdu) {
+        return createFromPdu(pdu, null);
     }
 
     /**
@@ -1722,6 +1737,16 @@ public class SmsMessage extends SmsMessageBase {
     @Override
     public MessageClass getMessageClass() {
         return messageClass;
+    }
+
+    /**
+     * Returns the network security event associated with this message.
+     *
+     * @return The {@link NetworkSecurityEvent}, or null if not present.
+     */
+    @Nullable
+    public NetworkSecurityEvent getNetworkSecurityEvent() {
+        return mNetworkSecurityEvent;
     }
 
     /**

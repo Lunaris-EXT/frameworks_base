@@ -1331,7 +1331,7 @@ public class PackageManagerServiceUtils {
         // NOTE: When no BUILD_NUMBER is set by the build system, it defaults to a build
         // that starts with "eng." to signify that this is an engineering build and not
         // destined for release.
-        if (isUpgrade || (isUserDebugBuild && incrementalVersion.startsWith("eng."))) {
+        if (isUserDebugBuild && incrementalVersion.startsWith("eng.")) {
             // Heuristic: If the /system directory has been modified recently due to an "adb sync"
             // or a regular make, then blow away the cache. Note that mtimes are *NOT* reliable
             // in general and should not be used for production changes. In this specific case,
@@ -1603,5 +1603,9 @@ public class PackageManagerServiceUtils {
                         + targetFile + ">");
             }
         }
+    }
+
+    public static boolean isLoading(float loadingProgress) {
+        return Math.abs(1.0f - loadingProgress) >= 0.00000001f;
     }
 }

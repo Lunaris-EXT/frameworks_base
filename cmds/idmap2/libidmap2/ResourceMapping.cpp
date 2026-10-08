@@ -123,20 +123,30 @@ Result<ResourceMapping> ResourceMapping::FromContainers(const TargetResourceCont
   }
 
   ResourceMapping mapping;
+  int error_count = 0;
+  constexpr auto kStopLoggingErrorThreshold = 100;
   for (const auto& overlay_pair : overlay_data->pairs) {
     const auto target_resid = target.GetResourceId(overlay_pair.resource_name);
     if (!target_resid) {
-      log_info.Warning(LogMessage() << target_resid.GetErrorMessage());
+      if (++error_count == kStopLoggingErrorThreshold) {
+        log_info.Warning(LogMessage() << "Too many error messages, stopping logging.");
+      } else if (error_count < kStopLoggingErrorThreshold) {
+        log_info.Warning(LogMessage() << target_resid.GetErrorMessage());
+      }
       continue;
     }
 
     if (enforce_overlayable) {
       auto overlayable = CheckOverlayable(target, overlay_info, fulfilled_policies, *target_resid);
       if (!overlayable) {
-        log_info.Warning(LogMessage() << "overlay '" << overlay.GetPath()
-                                      << "' is not allowed to overlay resource '"
-                                      << GetDebugResourceName(target, *target_resid)
-                                      << "' in target: " << overlayable.GetErrorMessage());
+        if (++error_count == kStopLoggingErrorThreshold) {
+          log_info.Warning(LogMessage() << "Too many error messages, stopping logging.");
+        } else if (error_count < kStopLoggingErrorThreshold) {
+          log_info.Warning(LogMessage() << "overlay '" << overlay.GetPath()
+                                        << "' is not allowed to overlay resource '"
+                                        << GetDebugResourceName(target, *target_resid)
+                                        << "' in target: " << overlayable.GetErrorMessage());
+        }
         continue;
       }
     }

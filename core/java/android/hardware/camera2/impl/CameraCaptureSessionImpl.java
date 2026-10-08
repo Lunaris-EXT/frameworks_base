@@ -15,7 +15,8 @@
  */
 package android.hardware.camera2.impl;
 
-import android.app.ActivityThread;
+import android.annotation.FlaggedApi;
+import android.annotation.NonNull;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraDevice;
@@ -40,6 +41,8 @@ import java.util.concurrent.Executor;
 
 import static android.hardware.camera2.impl.CameraDeviceImpl.checkHandler;
 import static com.android.internal.util.Preconditions.*;
+
+import com.android.internal.camera.flags.Flags;
 
 public class CameraCaptureSessionImpl extends CameraCaptureSession
         implements CameraCaptureSessionCore {
@@ -144,6 +147,17 @@ public class CameraCaptureSessionImpl extends CameraCaptureSession
 
         if (packageList.contains(packageName)) {
             mSkipUnconfigure = true;
+        }
+    }
+
+
+    @FlaggedApi(Flags.FLAG_SEAMLESS_TRANSITIONS)
+    @Override
+    public void updateOutputConfigurations(@NonNull List<OutputConfiguration> configurations)
+            throws CameraAccessException {
+        synchronized (mDeviceImpl.mInterfaceLock) {
+            checkNotClosed();
+            mDeviceImpl.updateOutputConfigurations(configurations);
         }
     }
 

@@ -46,7 +46,6 @@ static const char* kPathAllowlist[] = {
         "/system/framework/framework-res.apk",
         "/system/framework/org.lineageos.platform-res.apk",
         "/dev/urandom",
-        "/dev/ion",
         "/dev/dri/renderD129", // Fixes b/31172436
         "/dev/stune/foreground/tasks",
         "/dev/blkio/tasks",

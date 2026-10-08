@@ -41,8 +41,8 @@ import static android.service.autofill.FillRequest.FLAG_VIEW_REQUESTS_CREDMAN_SE
 import static android.service.autofill.FillRequest.INVALID_REQUEST_ID;
 import static android.service.autofill.Flags.highlightAutofillSingleField;
 import static android.service.autofill.Flags.improveFillDialogAconfig;
-import static android.service.autofill.Flags.logAugmentedServiceUid;
 import static android.service.autofill.Flags.metricsFixes;
+import static android.service.autofill.Flags.stringRebuildApi;
 import static android.view.autofill.AutofillManager.ACTION_RESPONSE_EXPIRED;
 import static android.view.autofill.AutofillManager.ACTION_START_SESSION;
 import static android.view.autofill.AutofillManager.ACTION_VALUE_CHANGED;
@@ -55,6 +55,7 @@ import static android.view.autofill.AutofillManager.FLAG_SMART_SUGGESTION_SYSTEM
 import static android.view.autofill.AutofillManager.getSmartSuggestionModeToString;
 
 import static com.android.internal.util.function.pooled.PooledLambda.obtainMessage;
+import static com.android.server.autofill.AutofillManagerService.sSupportMultiUserMultiDisplay;
 import static com.android.server.autofill.FillRequestEventLogger.TRIGGER_REASON_EXPLICITLY_REQUESTED;
 import static com.android.server.autofill.FillRequestEventLogger.TRIGGER_REASON_NORMAL_TRIGGER;
 import static com.android.server.autofill.FillRequestEventLogger.TRIGGER_REASON_PRE_TRIGGER;
@@ -191,6 +192,7 @@ import android.view.autofill.AutofillId;
 import android.view.autofill.AutofillManager;
 import android.view.autofill.AutofillManager.AutofillCommitReason;
 import android.view.autofill.AutofillManager.SmartSuggestionMode;
+import android.view.autofill.AutofillNoiseInjector;
 import android.view.autofill.AutofillValue;
 import android.view.autofill.IAutoFillManagerClient;
 import android.view.autofill.IAutofillWindowPresenter;
@@ -249,9 +251,10 @@ final class Session
                 RemoteFieldClassificationService.FieldClassificationServiceCallbacks {
     private static final String TAG = "AutofillSession";
 
-    // This should never be true in production. This is only for local debugging.
+    // These should never be true in production. This is only for local debugging.
     // Otherwise it will spam logcat.
     private static final boolean DBG = false;
+    private static final boolean DEBUG_DUMP_STRUCTURE = false;
 
     private static final String ACTION_DELAYED_FILL =
             "android.service.autofill.action.DELAYED_FILL";
@@ -286,6 +289,7 @@ final class Session
     private static RequestId mRequestId = new RequestId();
 
     private static AtomicInteger sIdCounterForPcc = new AtomicInteger(2);
+    private @Nullable String mNoiseInjectionMasterSeed;
 
     @GuardedBy("mLock")
     private @SessionState int mSessionState = STATE_UNKNOWN;
@@ -842,8 +846,8 @@ final class Session
             }
 
             mLastFillRequest = mPendingFillRequest;
-            if (sVerbose) {
-                Slog.v(TAG, "maybeRequestFillLocked(): sending fill request");
+            if (sDebug) {
+                Slog.d(TAG, "maybeRequestFillLocked(): sending fill request");
             }
             if (shouldRequestSecondaryProvider(mPendingFillRequest.getFlags())
                     && mSecondaryProviderHandler != null) {
@@ -975,7 +979,17 @@ final class Session
                     }
                     flags |= FillRequest.FLAG_COMPATIBILITY_MODE_REQUEST;
                 }
-                structure.sanitizeForParceling(true);
+
+                if (DEBUG_DUMP_STRUCTURE) {
+                    structure.dump(/* showSensitive= */ true);
+                }
+
+                AutofillNoiseInjector autofillNoiseInjector = null;
+                if (stringRebuildApi() && mNoiseInjectionMasterSeed != null) {
+                    autofillNoiseInjector = new AutofillNoiseInjector(
+                            mNoiseInjectionMasterSeed, structure.getActivityComponent(), userId);
+                }
+                structure.sanitizeForParceling(true, autofillNoiseInjector);
 
                 if (mContexts == null) {
                     mContexts = new ArrayList<>(1);
@@ -1490,8 +1504,8 @@ final class Session
         mSessionFlags.mExpiredResponse = false;
         mSessionState = STATE_ACTIVE;
         if (mSessionFlags.mAugmentedAutofillOnly || mRemoteFillService == null) {
-            if (sVerbose) {
-                Slog.v(
+            if (sDebug) {
+                Slog.d(
                         TAG,
                         "requestNewFillResponse(): triggering augmented autofill instead "
                                 + "(mForAugmentedAutofillOnly="
@@ -1503,12 +1517,8 @@ final class Session
             mSessionFlags.mAugmentedAutofillOnly = true;
             mFillRequestEventLogger.maybeSetRequestId(AUGMENTED_AUTOFILL_REQUEST_ID);
             mFillRequestEventLogger.maybeSetIsAugmented(true);
-            if (logAugmentedServiceUid()) {
-                mFillRequestEventLogger.maybeSetAutofillServiceUid(
+            mFillRequestEventLogger.maybeSetAutofillServiceUid(
                     mService.getAugmentedAutofillServiceUidLocked());
-            } else {
-                mFillRequestEventLogger.logAndEndEvent();
-            }
             triggerAugmentedAutofillLocked(flags);
             return Optional.empty();
         }
@@ -1526,8 +1536,8 @@ final class Session
         }
         mRequestLogs.put(requestId, log);
 
-        if (sVerbose) {
-            Slog.v(
+        if (sDebug) {
+            Slog.d(
                     TAG,
                     "Requesting structure for request #"
                             + ordinal
@@ -1681,6 +1691,7 @@ final class Session
             @NonNull LocalLog uiLatencyHistory,
             @NonNull LocalLog wtfHistory,
             @Nullable ComponentName serviceComponentName,
+            @Nullable String noiseInjectionMasterSeed,
             @NonNull ComponentName componentName,
             boolean compatMode,
             boolean bindInstantServiceAllowed,
@@ -1700,6 +1711,7 @@ final class Session
         mLock = lock;
         mUi = ui;
         mHandler = handler;
+        mNoiseInjectionMasterSeed = noiseInjectionMasterSeed;
 
         mCredentialAutofillService = getCredentialAutofillService(context);
 
@@ -1751,7 +1763,9 @@ final class Session
         int displayId =
                 LocalServices.getService(ActivityTaskManagerInternal.class)
                         .getDisplayId(activityToken);
-        mContext = Helper.getDisplayContext(context, displayId);
+        mContext = sSupportMultiUserMultiDisplay
+                ? context
+                : Helper.getDisplayContext(context, displayId);
         mComponentName = componentName;
         mCompatMode = compatMode;
         mSessionState = STATE_ACTIVE;
@@ -2075,8 +2089,8 @@ final class Session
             // It's possible that this maybe overwritten later on after PCC filtering.
             mFillResponseEventLogger.maybeSetAvailableCount(datasetCount);
 
-            // TODO(b/266379948): Ideally wait for PCC request to finish for a while more
-            // (say 100ms) before proceeding further on.
+            // A small delay to wait for the PCC request to finish was considered, but not
+            // implemented. See b/266379948 for context.
 
             processResponseLockedForPcc(response, response.getClientState(), requestFlags);
             mFillResponseEventLogger.maybeSetLatencyResponseProcessingMillis();
@@ -4199,9 +4213,6 @@ final class Session
                     Event.NO_SAVE_UI_REASON_NONE);
         }
         mSessionState = STATE_FINISHED;
-        final FillResponse response = getLastResponseLocked("showSaveLocked(%s)");
-        final SaveInfo saveInfo = response == null ? null : response.getSaveInfo();
-
         /*
          * Don't show save if the session has credman field
          */
@@ -4220,6 +4231,15 @@ final class Session
                     Event.NO_SAVE_UI_REASON_NONE);
         }
 
+        final FillResponse response = getLastResponseLocked("showSaveLocked(%s)");
+        final SaveInfo saveInfo = response == null ? null : response.getSaveInfo();
+        return processingSingleSaveInfoLocked(saveInfo, response);
+    }
+
+    @GuardedBy("mLock")
+    @NonNull
+    private SaveResult processingSingleSaveInfoLocked(@Nullable SaveInfo saveInfo,
+            @Nullable FillResponse response) {
         /*
          * The Save dialog is only shown if all conditions below are met:
          *
@@ -4758,7 +4778,7 @@ final class Session
                 final ViewState viewState = mViewStates.valueAt(viewStateNum);
 
                 final AutofillId id = viewState.id;
-                final AutofillValue value = viewState.getCurrentValue();
+                AutofillValue value = viewState.getCurrentValue();
                 if (value == null) {
                     if (sVerbose) Slog.v(TAG, "updateValuesForSaveLocked(): skipping " + id);
                     continue;
@@ -4768,6 +4788,24 @@ final class Session
                     Slog.w(TAG, "callSaveLocked(): did not find node with id " + id);
                     continue;
                 }
+
+                if (Flags.useCandidateSaveValueWhenUpdateSaveAssistStructure()) {
+                    AutofillValue candidateSaveValue = viewState.getCandidateSaveValue();
+                    if (value.isText()
+                            && value.getTextValue().isEmpty()
+                            && candidateSaveValue != null
+                            && candidateSaveValue.isText()
+                            && !candidateSaveValue.isEmpty()) {
+                        if (sVerbose) {
+                            Slog.v(
+                                    TAG,
+                                    "updateValuesForSaveLocked(): current value is empty, update to"
+                                            + " use candidate save value in assist structure");
+                        }
+                        value = candidateSaveValue;
+                    }
+                }
+
                 if (sVerbose) {
                     Slog.v(TAG, "updateValuesForSaveLocked(): updating " + id + " to " + value);
                 }
@@ -4789,8 +4827,8 @@ final class Session
                 }
             }
 
-            // Sanitize structure before it's sent to service.
-            context.getStructure().sanitizeForParceling(false);
+            // No sanitization on save flow, hence no AutofillNoiseInjector instance needed, either.
+            context.getStructure().sanitizeForParceling(false, null);
 
             if (sVerbose) {
                 Slog.v(
@@ -6458,7 +6496,7 @@ final class Session
         final @SmartSuggestionMode int supportedModes =
                 mService.getSupportedSmartSuggestionModesLocked();
         if (supportedModes == 0) {
-            if (sVerbose) Slog.v(TAG, "triggerAugmentedAutofillLocked(): no supported modes");
+            if (sDebug) Slog.d(TAG, "triggerAugmentedAutofillLocked(): no supported modes");
             return null;
         }
 
@@ -6467,7 +6505,7 @@ final class Session
         final RemoteAugmentedAutofillService remoteService =
                 mService.getRemoteAugmentedAutofillServiceLocked();
         if (remoteService == null) {
-            if (sVerbose) Slog.v(TAG, "triggerAugmentedAutofillLocked(): no service for user");
+            if (sDebug) Slog.d(TAG, "triggerAugmentedAutofillLocked(): no service for user");
             return null;
         }
 
@@ -6489,8 +6527,8 @@ final class Session
                 mService.isWhitelistedForAugmentedAutofillLocked(mComponentName);
 
         if (!isAllowlisted) {
-            if (sVerbose) {
-                Slog.v(
+            if (sDebug) {
+                Slog.d(
                         TAG,
                         "triggerAugmentedAutofillLocked(): "
                                 + ComponentName.flattenToShortString(mComponentName)
@@ -6505,8 +6543,8 @@ final class Session
             return null;
         }
 
-        if (sVerbose) {
-            Slog.v(
+        if (sDebug) {
+            Slog.d(
                     TAG,
                     "calling Augmented Autofill Service ("
                             + ComponentName.flattenToShortString(remoteService.getComponentName())
@@ -6524,10 +6562,8 @@ final class Session
         mFillRequestEventLogger.maybeSetFlags(mFlags);
         mFillRequestEventLogger.maybeSetRequestId(AUGMENTED_AUTOFILL_REQUEST_ID);
         mFillRequestEventLogger.maybeSetIsAugmented(true);
-        if (logAugmentedServiceUid()) {
-            mFillRequestEventLogger.maybeSetAutofillServiceUid(
-                    mService.getAugmentedAutofillServiceUidLocked());
-        }
+        mFillRequestEventLogger.maybeSetAutofillServiceUid(
+                mService.getAugmentedAutofillServiceUidLocked());
         mFillRequestEventLogger.logAndEndEvent();
 
         final ViewState viewState = mViewStates.get(mCurrentViewId);
@@ -6793,8 +6829,8 @@ final class Session
         }
 
         final int requestId = newResponse.getRequestId();
-        if (sVerbose) {
-            Slog.v(
+        if (sDebug) {
+            Slog.d(
                     TAG,
                     "processResponseLocked(): mCurrentViewId="
                             + mCurrentViewId
@@ -7931,8 +7967,8 @@ final class Session
 
     @GuardedBy("mLock")
     void forceRemoveFromServiceIfForAugmentedOnlyLocked() {
-        if (sVerbose) {
-            Slog.v(
+        if (sDebug) {
+            Slog.d(
                     TAG,
                     "forceRemoveFromServiceIfForAugmentedOnlyLocked("
                             + this.id
@@ -7946,7 +7982,7 @@ final class Session
 
     @GuardedBy("mLock")
     void forceRemoveFromServiceLocked(int clientState) {
-        if (sVerbose) Slog.v(TAG, "forceRemoveFromServiceLocked(): " + mPendingSaveUi);
+        if (sDebug) Slog.d(TAG, "forceRemoveFromServiceLocked(): " + mPendingSaveUi);
 
         final boolean isPendingSaveUi = isSaveUiPendingLocked();
         mPendingSaveUi = null;
@@ -7983,7 +8019,7 @@ final class Session
      */
     @GuardedBy("mLock")
     void removeFromServiceLocked() {
-        if (sVerbose) Slog.v(TAG, "removeFromServiceLocked(" + this.id + "): " + mPendingSaveUi);
+        if (sDebug) Slog.d(TAG, "removeFromServiceLocked(" + this.id + "): " + mPendingSaveUi);
         if (mDestroyed) {
             Slog.w(
                     TAG,

@@ -20,9 +20,7 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.app.WindowConfiguration
 import android.content.ContentResolver
-import android.content.Context
 import android.database.ContentObserver
-import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -31,11 +29,9 @@ import android.provider.Settings
 import android.view.View
 import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.app.animation.Interpolators
-import com.android.systemui.lunaris.batterybar.BatteryBarController
-import com.android.systemui.lunaris.logo.LogoImage
+import com.android.systemui.clock.ClockModernization
 import com.android.systemui.display.dagger.SystemUIDisplaySubcomponent.PerDisplaySingleton
 import com.android.systemui.statusbar.phone.LyricControllerModern
 import com.android.systemui.lifecycle.repeatWhenAttached
@@ -45,29 +41,18 @@ import com.android.systemui.shared.system.ActivityManagerWrapper
 import com.android.systemui.shared.system.TaskStackChangeListener
 import com.android.systemui.shared.system.TaskStackChangeListeners
 import com.android.systemui.statusbar.chips.mediaprojection.domain.model.MediaProjectionStopDialogModel
-import com.android.systemui.statusbar.chips.ui.binder.OngoingActivityChipBinder
-import com.android.systemui.statusbar.chips.ui.binder.OngoingActivityChipViewBinding
-import com.android.systemui.statusbar.chips.ui.model.MultipleOngoingActivityChipsModelLegacy
-import com.android.systemui.statusbar.chips.ui.model.OngoingActivityChipModel
-import com.android.systemui.statusbar.core.StatusBarConnectedDisplays
-import com.android.systemui.statusbar.core.StatusBarRootModernization
 import com.android.systemui.statusbar.events.shared.model.SystemEventAnimationState
 import com.android.systemui.statusbar.events.shared.model.SystemEventAnimationState.AnimatingIn
 import com.android.systemui.statusbar.events.shared.model.SystemEventAnimationState.AnimatingOut
 import com.android.systemui.statusbar.events.shared.model.SystemEventAnimationState.RunningChipAnim
-import com.android.systemui.statusbar.notification.icon.ui.viewbinder.ConnectedDisplaysStatusBarNotificationIconViewStore
-import com.android.systemui.statusbar.notification.promoted.PromotedNotificationUi
-import com.android.systemui.statusbar.phone.fragment.CollapsedStatusBarFragment
-import com.android.systemui.statusbar.phone.ongoingcall.StatusBarChipsModernization
-import com.android.systemui.statusbar.phone.ui.StatusBarIconController
 import com.android.systemui.statusbar.pipeline.shared.ui.model.VisibilityModel
 import com.android.systemui.statusbar.pipeline.shared.ui.viewmodel.HomeStatusBarViewModel
+import com.android.systemui.statusbar.phone.ui.StatusBarIconController
 import com.android.systemui.statusbar.policy.Clock
 import javax.inject.Inject
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import lineageos.providers.LineageSettings
@@ -81,9 +66,8 @@ interface HomeStatusBarViewBinder {
      * Binds the view to the view-model. [listener] will be notified whenever an event that may
      * change the status bar visibility occurs.
      *
-     * Null chip animations are used when [StatusBarRootModernization] is off (i.e., when we are
-     * binding from the fragment). If non-null, they control the animation of the system icon area
-     * to support the chip animations.
+     * If non-null, chip animations control the animation of the system icon area to support the
+     * chip animations.
      */
     fun bind(
         displayId: Int,
@@ -96,35 +80,13 @@ interface HomeStatusBarViewBinder {
 }
 
 @PerDisplaySingleton
-class HomeStatusBarViewBinderImpl
-@Inject
-constructor(
-    private val viewStoreFactory: ConnectedDisplaysStatusBarNotificationIconViewStore.Factory
-) : HomeStatusBarViewBinder {
-    private companion object {
-        private const val CLOCK_POSITION_RIGHT = 0
-        private const val CLOCK_POSITION_CENTER = 1
-        private const val CLOCK_POSITION_LEFT = 2
-        const val CHIP_STYLE_CUSTOM_GRADIENT = 13
-        const val GRADIENT_TEXT_STYLE_MASK = 1
-    }
-
+class HomeStatusBarViewBinderImpl @Inject constructor() : HomeStatusBarViewBinder {
     private data class ClockState(
         val autoHide: Boolean,
         val denyListed: Boolean,
         val hideForHun: Boolean,
-        val chipStyle: Int,
-        val dynamicIslandEnabled: Boolean,
         val position: Int,
         val visibilityModel: VisibilityModel,
-        val gradientStartColor: Int = Color.parseColor("#FF6B6B"),
-        val gradientEndColor: Int = Color.parseColor("#4ECDC4"),
-        val gradientAngle: Float = 0f,
-        val gradientMaskText: Boolean = false,
-    )
-
-    private data class Padding(
-        val start: Int, val top: Int, val end: Int, val bottom: Int,
     )
 
     override fun bind(
@@ -136,55 +98,35 @@ constructor(
         listener: StatusBarVisibilityChangeListener?,
     ) {
         // Set some top-level views to gone before we get started
-        val primaryChipView: View = view.requireViewById(R.id.ongoing_activity_chip_primary)
         val systemInfoView = view.requireViewById<View>(R.id.status_bar_end_side_content)
         val leftClock: Clock = view.requireViewById(R.id.clock)
-        val centerClock: Clock = view.findViewById(R.id.clock_center)
-        val rightClock: Clock = view.findViewById(R.id.clock_right)
+        val centerClock: Clock? = view.findViewById(R.id.clock_center)
+        val rightClock: Clock? = view.findViewById(R.id.clock_right)
+        val networkTrafficCenterView = view.findViewById<View>(R.id.network_traffic_holder_center)
+        val networkTrafficStartView = view.findViewById<View>(R.id.network_traffic_holder_start)
         val notificationIconsArea = view.requireViewById<View>(R.id.notificationIcons)
+        val batteryView = view.findViewById<View>(R.id.battery_composable_view)
 
-        val leftPaddingInit = leftClock.capturePadding()
-        val centerPaddingInit = centerClock.capturePadding()
-        val rightPaddingInit = rightClock.capturePadding()
-
-        val batteryBar: BatteryBarController = view.requireViewById(R.id.battery_bar)
-        val leftLogo: LogoImage = view.requireViewById(R.id.statusbar_logo)
-        val lyricContainer = view.findViewById<View>(R.id.lyric_container)
-        val leftSideView = view.findViewById<View>(R.id.status_bar_start_side_except_heads_up)
-        val centeredAreaView = view.findViewById<View>(R.id.centered_area)
-
-        // CollapsedStatusBarFragment doesn't need this
-        if (StatusBarRootModernization.isEnabled) {
-            // GONE because this shouldn't take space in the layout
-            primaryChipView.hideInitially(state = View.GONE)
-            systemInfoView.hideInitially()
-            leftClock.hideInitially(state = View.GONE)
-            centerClock.hideInitially(state = View.GONE)
-            rightClock.hideInitially(state = View.GONE)
-            batteryBar.hideInitially()
-            leftLogo.hideInitially()
-            notificationIconsArea.hideInitially()
-            lyricContainer?.hideInitially()
-        }
+        // GONE because this shouldn't take space in the layout
+        systemInfoView.hideInitially()
+        leftClock.hideInitially(state = View.GONE)
+        centerClock?.hideInitially(state = View.GONE)
+        rightClock?.hideInitially(state = View.GONE)
+        notificationIconsArea.hideInitially()
 
         view.repeatWhenAttached {
             repeatOnLifecycle(Lifecycle.State.CREATED) {
                 val context = view.context
 
+                val batteryVisible = MutableStateFlow<Boolean>(true)
                 val clockState =
                     MutableStateFlow(
                         ClockState(
                             autoHide = false,
                             denyListed = false,
                             hideForHun = false,
-                            chipStyle = 0,
-                            dynamicIslandEnabled = context.contentResolver.readDynamicIslandEnabled(),
                             position = context.contentResolver.readClockPosition(),
                             visibilityModel = VisibilityModel(View.GONE, true),
-                            gradientStartColor = context.contentResolver.readGradientStartColor(),
-                            gradientEndColor = context.contentResolver.readGradientEndColor(),
-                            gradientAngle = context.contentResolver.readGradientAngle(),
-                            gradientMaskText = context.contentResolver.readGradientMaskText(),
                         )
                     )
 
@@ -196,18 +138,6 @@ constructor(
                     Settings.Secure.getUriFor(StatusBarIconController.ICON_HIDE_LIST)
                 val statusBarClockUri: Uri =
                     LineageSettings.System.getUriFor(LineageSettings.System.STATUS_BAR_CLOCK)
-                val statusBarClockChipUri: Uri =
-                    Settings.System.getUriFor(Settings.System.STATUSBAR_CLOCK_CHIP)
-                val gradientStartColorUri: Uri =
-                    Settings.System.getUriFor(Settings.System.STATUSBAR_CLOCK_CHIP_GRADIENT_START_COLOR)
-                val gradientEndColorUri: Uri =
-                    Settings.System.getUriFor(Settings.System.STATUSBAR_CLOCK_CHIP_GRADIENT_END_COLOR)
-                val gradientAngleUri: Uri =
-                    Settings.System.getUriFor(Settings.System.STATUSBAR_CLOCK_CHIP_GRADIENT_ANGLE)
-                val gradientMaskTextUri: Uri =
-                    Settings.System.getUriFor(Settings.System.STATUSBAR_CLOCK_CHIP_GRADIENT_MASK_TEXT)
-                val dynamicIslandUri: Uri =
-                    Settings.System.getUriFor(Settings.System.STATUS_BAR_SHOW_DYNAMIC_ISLAND)
 
                 val taskStackListener =
                     object : TaskStackChangeListener {
@@ -223,6 +153,22 @@ constructor(
                 val contentObserver =
                     object : ContentObserver(Handler(Looper.getMainLooper())) {
                         override fun onChange(selfChange: Boolean, uri: Uri?) {
+                            batteryVisible.update { current ->
+                                when (uri) {
+                                    iconHideListUri -> {
+                                        !StatusBarIconController.getIconHideList(
+                                                context,
+                                                Settings.Secure.getString(
+                                                    context.contentResolver,
+                                                    StatusBarIconController.ICON_HIDE_LIST,
+                                                ),
+                                            )
+                                            .contains("battery")
+                                    }
+                                    else -> current
+                                }
+                            }
+
                             clockState.update { current ->
                                 when (uri) {
                                     clockAutoHideUri -> {
@@ -258,50 +204,13 @@ constructor(
                                         current.copy(
                                             position = context.contentResolver.readClockPosition()
                                         )
-                                    statusBarClockChipUri -> {
-                                        val chipStyle =
-                                            Settings.System.getIntForUser(context.contentResolver,
-                                                Settings.System.STATUSBAR_CLOCK_CHIP, 0,
-                                                UserHandle.USER_CURRENT
-                                            )
-                                        current.copy(
-                                            chipStyle = chipStyle
-                                        )
-                                    }
-                                    gradientStartColorUri ->
-                                        current.copy(
-                                            gradientStartColor =
-                                                context.contentResolver.readGradientStartColor()
-                                        )
-                                    gradientEndColorUri ->
-                                        current.copy(
-                                            gradientEndColor =
-                                                context.contentResolver.readGradientEndColor()
-                                        )
-                                    gradientAngleUri ->
-                                        current.copy(
-                                            gradientAngle =
-                                                context.contentResolver.readGradientAngle()
-                                        )
-                                    gradientMaskTextUri ->
-                                       current.copy(
-                                           gradientMaskText =
-                                               context.contentResolver.readGradientMaskText()
-                                       )
-                                    dynamicIslandUri ->
-                                        current.copy(
-                                            dynamicIslandEnabled =
-                                                context.contentResolver.readDynamicIslandEnabled()
-                                        )
                                     else -> current
                                 }
                             }
                         }
                     }
 
-                val urisToObserve = listOf(clockAutoHideUri, iconHideListUri, statusBarClockUri,
-                    statusBarClockChipUri, gradientStartColorUri, gradientEndColorUri, gradientAngleUri,
-                    gradientMaskTextUri, dynamicIslandUri)
+                val urisToObserve = listOf(clockAutoHideUri, iconHideListUri, statusBarClockUri)
                 urisToObserve.forEach { uri ->
                     context.contentResolver.registerContentObserver(
                         uri,
@@ -312,14 +221,15 @@ constructor(
                     contentObserver.onChange(false, uri)
                 }
 
-                val iconViewStore =
-                    if (StatusBarConnectedDisplays.isEnabled) {
-                        viewStoreFactory.create(displayId).also {
-                            lifecycleScope.launch { it.activate() }
-                        }
-                    } else {
-                        null
+                // Ensure cleanup when lifecycle ends
+                val job = coroutineContext[Job]
+                job?.invokeOnCompletion {
+                    runCatching {
+                        context.contentResolver.unregisterContentObserver(contentObserver)
+                        TaskStackChangeListeners.getInstance()
+                            .unregisterTaskStackListener(taskStackListener)
                     }
+                }
                 listener?.let { listener ->
                     launch {
                         viewModel.isTransitioningFromLockscreenToOccluded.collect {
@@ -354,114 +264,6 @@ constructor(
                     }
                 }
 
-                if (!PromotedNotificationUi.isEnabled && !StatusBarChipsModernization.isEnabled) {
-                    val primaryChipViewBinding =
-                        OngoingActivityChipBinder.createBinding(primaryChipView)
-
-                    launch {
-                        combine(
-                                viewModel.primaryOngoingActivityChip,
-                                viewModel.canShowOngoingActivityChips,
-                                ::Pair,
-                            )
-                            .distinctUntilChanged()
-                            .collect { (primaryChipModel, areChipsAllowed) ->
-                                OngoingActivityChipBinder.bind(
-                                    primaryChipModel,
-                                    primaryChipViewBinding,
-                                    iconViewStore,
-                                )
-
-                                if (StatusBarRootModernization.isEnabled) {
-                                    bindLegacyPrimaryOngoingActivityChipWithVisibility(
-                                        areChipsAllowed,
-                                        primaryChipModel,
-                                        primaryChipViewBinding,
-                                    )
-                                } else {
-                                    when (primaryChipModel) {
-                                        is OngoingActivityChipModel.Active ->
-                                            listener?.onOngoingActivityStatusChanged(
-                                                hasPrimaryOngoingActivity = true,
-                                                hasSecondaryOngoingActivity = false,
-                                                shouldAnimate = true,
-                                            )
-
-                                        is OngoingActivityChipModel.Inactive ->
-                                            listener?.onOngoingActivityStatusChanged(
-                                                hasPrimaryOngoingActivity = false,
-                                                hasSecondaryOngoingActivity = false,
-                                                shouldAnimate = primaryChipModel.shouldAnimate,
-                                            )
-                                    }
-                                }
-                            }
-                    }
-                }
-
-                if (PromotedNotificationUi.isEnabled && !StatusBarChipsModernization.isEnabled) {
-                    // Create view bindings here so we don't keep re-fetching child views each time
-                    // the chip model changes.
-                    val primaryChipViewBinding =
-                        OngoingActivityChipBinder.createBinding(primaryChipView)
-                    val secondaryChipViewBinding =
-                        OngoingActivityChipBinder.createBinding(
-                            view.requireViewById(R.id.ongoing_activity_chip_secondary)
-                        )
-                    OngoingActivityChipBinder.updateTypefaces(primaryChipViewBinding)
-                    OngoingActivityChipBinder.updateTypefaces(secondaryChipViewBinding)
-                    launch {
-                        combine(
-                                viewModel.ongoingActivityChipsLegacy,
-                                viewModel.canShowOngoingActivityChips,
-                                ::Pair,
-                            )
-                            .distinctUntilChanged()
-                            .collect { (chips, areChipsAllowed) ->
-                                OngoingActivityChipBinder.bind(
-                                    chips.primary,
-                                    primaryChipViewBinding,
-                                    iconViewStore,
-                                )
-                                OngoingActivityChipBinder.bind(
-                                    chips.secondary,
-                                    secondaryChipViewBinding,
-                                    iconViewStore,
-                                )
-                                if (StatusBarRootModernization.isEnabled) {
-                                    bindOngoingActivityChipsWithVisibility(
-                                        areChipsAllowed,
-                                        chips,
-                                        primaryChipViewBinding,
-                                        secondaryChipViewBinding,
-                                    )
-                                } else {
-                                    listener?.onOngoingActivityStatusChanged(
-                                        hasPrimaryOngoingActivity =
-                                            chips.primary is OngoingActivityChipModel.Active,
-                                        hasSecondaryOngoingActivity =
-                                            chips.secondary is OngoingActivityChipModel.Active,
-                                        // TODO(b/364653005): Figure out the animation story here.
-                                        shouldAnimate = true,
-                                    )
-                                }
-                            }
-                    }
-                    launch {
-                        viewModel.contentArea.collect { _ ->
-                            OngoingActivityChipBinder.resetPrimaryChipWidthRestrictions(
-                                primaryChipViewBinding,
-                                viewModel.ongoingActivityChipsLegacy.value.primary,
-                            )
-                            OngoingActivityChipBinder.resetSecondaryChipWidthRestrictions(
-                                secondaryChipViewBinding,
-                                viewModel.ongoingActivityChipsLegacy.value.secondary,
-                            )
-                            view.requestLayout()
-                        }
-                    }
-                }
-
                 if (SceneContainerFlag.isEnabled) {
                     listener?.let { listener ->
                         launch {
@@ -472,23 +274,21 @@ constructor(
                     }
                 }
 
-                if (StatusBarRootModernization.isEnabled) {
-                    // TODO(b/393445203): figure out the best story for this stub view. This crashes
-                    // if we move it up to the top of [bind]
-                    val operatorNameView = view.requireViewById<View>(R.id.operator_name_frame)
-                    operatorNameView.isVisible = false
+                // TODO(b/393445203): figure out the best story for this stub view. This crashes
+                // if we move it up to the top of [bind]
+                val operatorNameView = view.requireViewById<View>(R.id.operator_name_frame)
+                operatorNameView.isVisible = false
 
-                    StatusBarOperatorNameViewBinder.bind(
-                        operatorNameView,
-                        viewModel.operatorNameViewModel,
-                        viewModel.areaTint,
-                    )
-                    launch {
-                        viewModel.shouldShowOperatorNameView.collect {
-                            operatorNameView.isVisible = it
-                        }
-                    }
+                StatusBarOperatorNameViewBinder.bind(
+                    operatorNameView,
+                    viewModel.operatorNameViewModel,
+                    viewModel.areaTint,
+                )
+                launch {
+                    viewModel.shouldShowOperatorNameView.collect { operatorNameView.isVisible = it }
+                }
 
+                if (!ClockModernization.isEnabled) {
                     launch {
                         combine(
                                 viewModel.isClockVisible,
@@ -507,13 +307,12 @@ constructor(
                     }
 
                     launch {
-                        var lastChipStyle: Int? = null
-                        var lastClockPosition: Int? = null
-                        var lastGradientStartColor: Int? = null
-                        var lastGradientEndColor: Int? = null
-                        var lastGradientAngle: Float? = null
-                        var lastGradientMaskText: Boolean? = null
+                        batteryVisible.collect { isVisible ->
+                            batteryView.isVisible = isVisible
+                        }
+                    }
 
+                    launch {
                         clockState.collect { state ->
                             // We only want to hide left clock for HUN
                             val hunBlocksClock =
@@ -525,9 +324,7 @@ constructor(
                                     state.visibilityModel.visibility == View.VISIBLE &&
                                         !hunBlocksClock &&
                                         !state.autoHide &&
-                                        !state.denyListed &&
-                                        !(state.position == CLOCK_POSITION_CENTER &&
-                                            state.dynamicIslandEnabled)
+                                        !state.denyListed
                                 ) {
                                     state.visibilityModel
                                 } else {
@@ -535,7 +332,7 @@ constructor(
                                 }
 
                             // Pick active clock view
-                            val activeClock: Clock =
+                            val activeClock: Clock? =
                                 when (state.position) {
                                     CLOCK_POSITION_CENTER -> centerClock ?: leftClock
                                     CLOCK_POSITION_RIGHT -> rightClock ?: leftClock
@@ -545,132 +342,51 @@ constructor(
 
                             // Hide all clocks first
                             leftClock.visibility = View.GONE
-                            centerClock.visibility = View.GONE
-                            rightClock.visibility = View.GONE
+                            centerClock?.visibility = View.GONE
+                            rightClock?.visibility = View.GONE
 
                             // Show only the active one
-                            activeClock.adjustVisibility(finalVisibility)
-
-                            // Only touch chip UI when needed
-                            val gradientParamsChanged =
-                                state.chipStyle == CHIP_STYLE_CUSTOM_GRADIENT && (
-                                    lastGradientStartColor != state.gradientStartColor ||
-                                    lastGradientEndColor != state.gradientEndColor ||
-                                    lastGradientAngle != state.gradientAngle ||
-                                    lastGradientMaskText != state.gradientMaskText
-                                )
-                            val chipNeedsUpdate = (lastChipStyle != state.chipStyle)
-                                        || (lastClockPosition != state.position)
-                                        || gradientParamsChanged
-                            if (chipNeedsUpdate) {
-                                applyClockChip(
-                                    context = context,
-                                    chipStyle = state.chipStyle,
-                                    activeClock = activeClock,
-                                    leftClock = leftClock,
-                                    centerClock = centerClock,
-                                    rightClock = rightClock,
-                                    leftPaddingInit = leftPaddingInit,
-                                    centerPaddingInit = centerPaddingInit,
-                                    rightPaddingInit = rightPaddingInit,
-                                    gradientStartColor = state.gradientStartColor,
-                                    gradientEndColor = state.gradientEndColor,
-                                    gradientAngle = state.gradientAngle,
-                                    gradientMaskText = state.gradientMaskText,
-                                )
-                                lastChipStyle = state.chipStyle
-                                lastClockPosition = state.position
-                                lastGradientStartColor = state.gradientStartColor
-                                lastGradientEndColor = state.gradientEndColor
-                                lastGradientAngle = state.gradientAngle
-                                lastGradientMaskText = state.gradientMaskText
-                            }
+                            activeClock?.adjustVisibility(finalVisibility)
                         }
                     }
+                }
 
-                    // Initialize lyric controller if available
-                    var lyricController: LyricControllerModern? = null
-                    if (lyricContainer != null) {
-                        lyricController = LyricControllerModern(
-                            context = view.context,
-                            lyricContainer = lyricContainer,
-                            leftSideView = leftSideView,
-                            centeredAreaView = centeredAreaView
-                        ).also { controller ->
-                            controller.attach()
-                        }
+                launch {
+                    viewModel.isNotificationIconContainerVisible.collect {
+                        notificationIconsArea.adjustVisibility(it)
                     }
+                }
 
-                    // Ensure cleanup when lifecycle ends
-                    val job = coroutineContext[Job]
-                    job?.invokeOnCompletion {
-                        runCatching<Unit> {
-                            context.contentResolver.unregisterContentObserver(contentObserver)
-                            TaskStackChangeListeners.getInstance()
-                                .unregisterTaskStackListener(taskStackListener)
-                            lyricController?.detach()
-                        }
-                    }
-
-                    launch {
-                        viewModel.isNotificationIconContainerVisible.collect {
-                            notificationIconsArea.adjustVisibility(it)
-                            batteryBar.adjustVisibility(it)
-                            leftLogo.adjustVisibility(it)
-                        }
-                    }
-
-                    launch {
-                        combine(
-                            viewModel.isNotificationIconContainerVisible,
-                            viewModel.hideStartSideContentForHeadsUp,
-                            combine(
-                                viewModel.primaryOngoingActivityChip,
-                                viewModel.ongoingActivityChipsLegacy,
-                            ) { primaryChip, chipsLegacy ->
-                                when {
-                                    primaryChip is OngoingActivityChipModel.Active -> true
-                                    chipsLegacy.primary is OngoingActivityChipModel.Active -> true
-                                    chipsLegacy.secondary is OngoingActivityChipModel.Active -> true
-                                    else -> false
+                launch {
+                    viewModel.systemInfoCombinedVis.collect { (baseVis, animState) ->
+                        // Broadly speaking, the baseVis controls the view.visibility, and
+                        // the animation state uses only alpha to achieve its effect. This
+                        // means that we can always modify the visibility, and if we're
+                        // animating we can use the animState to handle it. If we are not
+                        // animating, then we can use the baseVis default animation
+                        if (animState.isAnimatingChip()) {
+                            // Just apply the visibility of the view, but don't animate
+                            systemInfoView.visibility = baseVis.visibility
+                            // Now apply the animation state, with its animator
+                            when (animState) {
+                                AnimatingIn -> {
+                                    systemEventChipAnimateIn?.invoke(networkTrafficCenterView)
+                                    systemEventChipAnimateIn?.invoke(networkTrafficStartView)
+                                    systemEventChipAnimateIn?.invoke(systemInfoView)
                                 }
-                            },
-                        ) { isNotificationIconsVisible, hideForHun, hasOngoingActivity ->
-                            Triple(isNotificationIconsVisible, hideForHun, hasOngoingActivity)
-                        }.collect { (isNotificationIconsVisible, hideForHun, hasOngoingActivity) ->
-                            lyricController?.updateVisibility(
-                                isNotificationIconsVisible = isNotificationIconsVisible.visibility == View.VISIBLE,
-                                hideForHun = hideForHun,
-                                hasOngoingActivity = hasOngoingActivity
-                            )
-                        }
-                    }
-
-                    launch {
-                        viewModel.systemInfoCombinedVis.collect { (baseVis, animState) ->
-                            // Broadly speaking, the baseVis controls the view.visibility, and
-                            // the animation state uses only alpha to achieve its effect. This
-                            // means that we can always modify the visibility, and if we're
-                            // animating we can use the animState to handle it. If we are not
-                            // animating, then we can use the baseVis default animation
-                            if (animState.isAnimatingChip()) {
-                                // Just apply the visibility of the view, but don't animate
-                                systemInfoView.visibility = baseVis.visibility
-                                // Now apply the animation state, with its animator
-                                when (animState) {
-                                    AnimatingIn -> {
-                                        systemEventChipAnimateIn?.invoke(systemInfoView)
-                                    }
-                                    AnimatingOut -> {
-                                        systemEventChipAnimateOut?.invoke(systemInfoView)
-                                    }
-                                    else -> {
-                                        // Nothing to do here
-                                    }
+                                AnimatingOut -> {
+                                    systemEventChipAnimateOut?.invoke(networkTrafficCenterView)
+                                    systemEventChipAnimateOut?.invoke(networkTrafficStartView)
+                                    systemEventChipAnimateOut?.invoke(systemInfoView)
                                 }
-                            } else {
-                                systemInfoView.adjustVisibility(baseVis)
+                                else -> {
+                                    // Nothing to do here
+                                }
                             }
+                        } else {
+                            networkTrafficCenterView.adjustVisibility(baseVis)
+                            networkTrafficStartView.adjustVisibility(baseVis)
+                            systemInfoView.adjustVisibility(baseVis)
                         }
                     }
                 }
@@ -678,44 +394,30 @@ constructor(
         }
     }
 
-    /** Bind the (legacy) single primary ongoing activity chip with the status bar visibility */
-    private fun bindLegacyPrimaryOngoingActivityChipWithVisibility(
-        areChipsAllowed: Boolean,
-        primaryChipModel: OngoingActivityChipModel,
-        primaryChipViewBinding: OngoingActivityChipViewBinding,
-    ) {
-        if (!areChipsAllowed) {
-            primaryChipViewBinding.rootView.hide(shouldAnimateChange = false)
-        } else {
-            when (primaryChipModel) {
-                is OngoingActivityChipModel.Active -> {
-                    primaryChipViewBinding.rootView.show(shouldAnimateChange = true)
-                }
-
-                is OngoingActivityChipModel.Inactive -> {
-                    primaryChipViewBinding.rootView.hide(
-                        state = View.GONE,
-                        shouldAnimateChange = primaryChipModel.shouldAnimate,
-                    )
-                }
-            }
-        }
+    private fun ContentResolver.readClockAutoHide(): Int {
+        return LineageSettings.System.getIntForUser(
+            this,
+            LineageSettings.System.STATUS_BAR_CLOCK_AUTO_HIDE,
+            0,
+            UserHandle.USER_CURRENT,
+        )
     }
 
-    /** Bind the primary/secondary chips along with the home status bar's visibility */
-    private fun bindOngoingActivityChipsWithVisibility(
-        areChipsAllowed: Boolean,
-        chips: MultipleOngoingActivityChipsModelLegacy,
-        primaryChipViewBinding: OngoingActivityChipViewBinding,
-        secondaryChipViewBinding: OngoingActivityChipViewBinding,
-    ) {
-        if (!areChipsAllowed) {
-            primaryChipViewBinding.rootView.hide(shouldAnimateChange = false)
-            secondaryChipViewBinding.rootView.hide(shouldAnimateChange = false)
-        } else {
-            primaryChipViewBinding.rootView.adjustVisibility(chips.primary.toVisibilityModel())
-            secondaryChipViewBinding.rootView.adjustVisibility(chips.secondary.toVisibilityModel())
-        }
+    private fun ContentResolver.readClockPosition(): Int {
+        return LineageSettings.System.getIntForUser(
+            this,
+            LineageSettings.System.STATUS_BAR_CLOCK,
+            CLOCK_POSITION_LEFT,
+            UserHandle.USER_CURRENT,
+        )
+    }
+
+    private fun shouldClockAutoHideForCurrentTask(): Boolean {
+        return ActivityManagerWrapper.getInstance()
+            .runningTask
+            ?.configuration
+            ?.windowConfiguration
+            ?.activityType == WindowConfiguration.ACTIVITY_TYPE_HOME
     }
 
     private fun ContentResolver.readClockAutoHide(): Int {
@@ -792,14 +494,6 @@ constructor(
             RunningChipAnim -> true
             else -> false
         }
-
-    private fun OngoingActivityChipModel.toVisibilityModel(): VisibilityModel {
-        return VisibilityModel(
-            visibility = if (this is OngoingActivityChipModel.Active) View.VISIBLE else View.GONE,
-            // TODO(b/364653005): Figure out the animation story here.
-            shouldAnimateChange = true,
-        )
-    }
 
     private fun animateLightsOutView(view: View, visible: Boolean) {
         view.animate().cancel()
@@ -1010,7 +704,7 @@ constructor(
 
         animate()
             .alpha(0f)
-            .setDuration(CollapsedStatusBarFragment.FADE_OUT_DURATION.toLong())
+            .setDuration(FADE_OUT_DURATION.toLong())
             .setStartDelay(0)
             .setInterpolator(Interpolators.ALPHA_OUT)
             .withEndAction { visibility = state }
@@ -1029,15 +723,26 @@ constructor(
         }
         animate()
             .alpha(1f)
-            .setDuration(CollapsedStatusBarFragment.FADE_IN_DURATION.toLong())
+            .setDuration(FADE_IN_DURATION.toLong())
             .setInterpolator(Interpolators.ALPHA_IN)
-            .setStartDelay(CollapsedStatusBarFragment.FADE_IN_DELAY.toLong())
+            .setStartDelay(FADE_IN_DELAY.toLong())
             // We need to clean up any pending end action from animateHide if we call both hide and
             // show in the same frame before the animation actually gets started.
             // cancel() doesn't really remove the end action.
             .withEndAction(null)
 
         // TODO(b/364360986): Synchronize the motion with the Keyguard fading if necessary.
+    }
+
+    companion object {
+        private const val CLOCK_POSITION_RIGHT = 0
+        private const val CLOCK_POSITION_CENTER = 1
+        private const val CLOCK_POSITION_LEFT = 2
+
+        /** Animation durations for status bar. Used to be defined in the fragment */
+        const val FADE_IN_DURATION = 320
+        const val FADE_OUT_DURATION = 160
+        const val FADE_IN_DELAY = 50
     }
 }
 
@@ -1051,18 +756,6 @@ interface StatusBarVisibilityChangeListener {
 
     /** Called when a transition from lockscreen to dream has started. */
     fun onTransitionFromLockscreenToDreamStarted()
-
-    /**
-     * Called when the status of the ongoing activity chip (active or not active) has changed.
-     *
-     * @param shouldAnimate true if the chip should animate in/out, and false if the chip should
-     *   immediately appear/disappear.
-     */
-    fun onOngoingActivityStatusChanged(
-        hasPrimaryOngoingActivity: Boolean,
-        hasSecondaryOngoingActivity: Boolean,
-        shouldAnimate: Boolean,
-    )
 
     /**
      * Called when the scene state has changed such that the home status bar is newly allowed or no

@@ -1038,7 +1038,8 @@ public final class MediaMetadata implements Parcelable {
             Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
             canvas.drawBitmap(bmp, matrix, paint);
             StrictMode.noteSlowCall("Downscaling oversized MediaMetadata Bitmap");
-            return output;
+            // Downscale directly to ashmem in anticipation of parceling.
+            return Bitmap.createScaledAshmemBitmap(bmp, width, height, true);
         }
     }
 }

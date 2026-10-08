@@ -29,14 +29,15 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.content.res.Resources;
+import android.Manifest;
 import android.media.AudioManager;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
-import android.nfc.NfcAdapter;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
@@ -128,7 +129,6 @@ public class PhoneStatusBarPolicy
     private final String mSlotScreenRecord;
     private final String mSlotConnectedDisplay;
     private final String mSlotFirewall;
-    private final String mSlotNfc;
     private final int mDisplayId;
     private final SharedPreferences mSharedPreferences;
     private final DateFormatUtil mDateFormatUtil;
@@ -173,12 +173,6 @@ public class PhoneStatusBarPolicy
 
     private BluetoothController mBluetooth;
     private AlarmClockInfo mNextAlarm;
-
-    private NfcAdapter mAdapter;
-
-    private TunerService mTunerService;
-
-    private boolean mShowBluetoothBattery;
 
     @Inject
     public PhoneStatusBarPolicy(Context context, StatusBarIconController iconController,
@@ -249,7 +243,6 @@ public class PhoneStatusBarPolicy
         mSlotScreenRecord = resources.getString(
                 com.android.internal.R.string.status_bar_screen_record);
         mSlotFirewall = resources.getString(R.string.status_bar_firewall_slot);
-        mSlotNfc = resources.getString(com.android.internal.R.string.status_bar_nfc);
 
         mDisplayId = displayId;
         mSharedPreferences = sharedPreferences;
@@ -339,12 +332,6 @@ public class PhoneStatusBarPolicy
         // firewall
         mIconController.setIcon(mSlotFirewall, R.drawable.stat_sys_firewall, null);
         mIconController.setIconVisibility(mSlotFirewall, mFirewallVisible);
-
-        mIconController.setIcon(mSlotNfc, R.drawable.stat_sys_nfc,
-                mResources.getString(R.string.status_bar_nfc));
-
-        mIconController.setIconVisibility(mSlotNfc, false);
-        updateNfc();
 
         mRotationLockController.addCallback(this);
         mBluetooth.addCallback(this);
@@ -509,7 +496,7 @@ public class PhoneStatusBarPolicy
             if (mBluetooth.isBluetoothConnected()
                     && (mBluetooth.isBluetoothAudioActive()
                     || !mBluetooth.isBluetoothAudioProfileOnly())) {
-                int batteryLevel = mShowBluetoothBattery ? mBluetooth.getBatteryLevel() : -1;
+                int batteryLevel = mBluetooth.getBatteryLevel();
                 if (batteryLevel == 100) {
                     iconId = R.drawable.stat_sys_data_bluetooth_connected_battery_9;
                 } else if (batteryLevel >= 90) {
@@ -581,17 +568,12 @@ public class PhoneStatusBarPolicy
                     if (iconResId != Resources.ID_NULL && (!mKeyguardStateController.isShowing()
                             || mKeyguardStateController.isOccluded())) {
                         String accessibilityString = "";
-                        if (android.os.Flags.allowPrivateProfile()
-                                && android.multiuser.Flags.enablePrivateSpaceFeatures()) {
-                            try {
-                                accessibilityString =
-                                        mUserManager.getProfileAccessibilityString(userId);
-                            } catch (Resources.NotFoundException nfe) {
-                                Log.e(TAG, "Accessibility string not found for userId:"
-                                        + userId);
-                            }
-                        } else {
-                            accessibilityString = getManagedProfileAccessibilityString();
+                        try {
+                            accessibilityString =
+                                    mUserManager.getProfileAccessibilityString(userId);
+                        } catch (Resources.NotFoundException nfe) {
+                            Log.e(TAG, "Accessibility string not found for userId:"
+                                    + userId);
                         }
                         showIcon = true;
                         mIconController.setIcon(mSlotManagedProfile,
@@ -643,6 +625,34 @@ public class PhoneStatusBarPolicy
                                 final int uid = ActivityTaskManager.getService()
                                         .getLastResumedActivityUid();
                                 if (uid != Process.INVALID_UID) {
+                                    boolean requestsInternet = false;
+                                    PackageManager pm = mContext.getPackageManager();
+                                    String[] packages = pm.getPackagesForUid(uid);
+                                    if (packages != null) {
+                                        for (String pkg : packages) {
+                                            try {
+                                                PackageInfo pi = pm.getPackageInfo(
+                                                        pkg, PackageManager.GET_PERMISSIONS);
+                                                if (pi != null
+                                                        && pi.requestedPermissions != null) {
+                                                    for (String permission :
+                                                            pi.requestedPermissions) {
+                                                        if (Manifest.permission.INTERNET
+                                                                .equals(permission)) {
+                                                            requestsInternet = true;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            } catch (PackageManager.NameNotFoundException e) {
+                                                // Ignore
+                                            }
+                                            if (requestsInternet) {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    final boolean finalRequestsInternet = requestsInternet;
                                     mMainExecutor.execute(() -> {
                                         boolean isLauncher = false;
                                         List<ResolveInfo> homeActivities = mContext
@@ -664,6 +674,7 @@ public class PhoneStatusBarPolicy
                                         final boolean finalIsLauncher = isLauncher;
                                         final boolean showIcon;
                                         if (!finalIsLauncher
+                                                && finalRequestsInternet
                                                 && blocked
                                                 != ConnectivityManager.BLOCKED_REASON_NONE
                                                 && (!mKeyguardStateController.isShowing()

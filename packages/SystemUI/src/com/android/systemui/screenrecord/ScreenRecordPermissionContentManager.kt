@@ -48,15 +48,15 @@ import com.android.systemui.mediaprojection.MediaProjectionMetricsLogger
 import com.android.systemui.mediaprojection.appselector.MediaProjectionAppSelectorActivity
 import com.android.systemui.mediaprojection.permission.BaseMediaProjectionPermissionContentManager
 import com.android.systemui.mediaprojection.permission.ENTIRE_SCREEN
+import com.android.systemui.mediaprojection.permission.ENTIRE_SCREEN_EXTERNAL
 import com.android.systemui.mediaprojection.permission.MediaProjectionPermissionUtils.getConnectedDisplays
 import com.android.systemui.mediaprojection.permission.SINGLE_APP
 import com.android.systemui.mediaprojection.permission.ScreenShareMode
 import com.android.systemui.mediaprojection.permission.ScreenShareOption
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.res.R
-import com.android.systemui.screenrecord.domain.ScreenRecordingParameters
-import com.android.systemui.screenrecord.domain.interactor.ScreenRecordingStartStopInteractor
-import com.google.android.material.materialswitch.MaterialSwitch
+import com.android.systemui.screenrecord.data.repository.ScreenRecordingStartStopRepository
+import com.android.systemui.screenrecord.shared.model.ScreenRecordingParameters
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -71,7 +71,7 @@ class ScreenRecordPermissionContentManager(
     private val controller: ScreenRecordUxController,
     private val activityStarter: ActivityStarter,
     private val onStartRecordingClicked: Runnable?,
-    private val screenRecordingStartStopInteractor: ScreenRecordingStartStopInteractor,
+    private val screenRecordingStartStopRepository: ScreenRecordingStartStopRepository,
 ) :
     BaseMediaProjectionPermissionContentManager(
         createOptionList(displayManager),
@@ -89,7 +89,7 @@ class ScreenRecordPermissionContentManager(
         @Assisted controller: ScreenRecordUxController,
         activityStarter: ActivityStarter,
         @Assisted onStartRecordingClicked: Runnable?,
-        screenRecordingStartStopInteractor: ScreenRecordingStartStopInteractor,
+        screenRecordingStartStopRepository: ScreenRecordingStartStopRepository,
     ) : this(
         hostUserHandle,
         hostUid,
@@ -99,7 +99,7 @@ class ScreenRecordPermissionContentManager(
         controller,
         activityStarter,
         onStartRecordingClicked,
-        screenRecordingStartStopInteractor,
+        screenRecordingStartStopRepository,
     )
 
     @AssistedFactory
@@ -112,12 +112,12 @@ class ScreenRecordPermissionContentManager(
         ): ScreenRecordPermissionContentManager
     }
 
-    private lateinit var tapsSwitch: CompoundButton
-    private lateinit var audioSwitch: CompoundButton
-    private lateinit var lowQualitySwitch: CompoundButton
-    private lateinit var longerDurationSwitch: CompoundButton
-    private lateinit var skipTimeSwitch: CompoundButton
-    private lateinit var hevcSwitch: CompoundButton
+    private lateinit var tapsSwitch: Switch
+    private lateinit var audioSwitch: Switch
+    private lateinit var lowQualitySwitch: Switch
+    private lateinit var longerDurationSwitch: Switch
+    private lateinit var skipTimeSwitch: Switch
+    private lateinit var hevcSwitch: Switch
     private lateinit var tapsView: View
     private lateinit var options: Spinner
     private lateinit var bitrateSpinner: Spinner
@@ -139,7 +139,10 @@ class ScreenRecordPermissionContentManager(
 
     fun startButtonOnClicked() {
         onStartRecordingClicked?.run()
-        if (selectedScreenShareOption.mode == ENTIRE_SCREEN) {
+        if (
+            selectedScreenShareOption.mode == ENTIRE_SCREEN ||
+                selectedScreenShareOption.mode == ENTIRE_SCREEN_EXTERNAL
+        ) {
             requestScreenCapture(
                 captureTarget = null,
                 displayId = selectedScreenShareOption.displayId,
@@ -175,7 +178,8 @@ class ScreenRecordPermissionContentManager(
         audioSwitch = containerView.requireViewById(R.id.screenrecord_audio_switch)
         tapsSwitch = containerView.requireViewById(R.id.screenrecord_taps_switch)
         lowQualitySwitch = containerView.requireViewById(R.id.screenrecord_lowquality_switch)
-        longerDurationSwitch = containerView.requireViewById(R.id.screenrecord_longer_timeout_switch)
+        longerDurationSwitch =
+            containerView.requireViewById(R.id.screenrecord_longer_timeout_switch)
         skipTimeSwitch = containerView.requireViewById(R.id.screenrecord_skip_time_switch)
         hevcSwitch = containerView.requireViewById(R.id.screenrecord_hevc_switch)
 
@@ -203,17 +207,6 @@ class ScreenRecordPermissionContentManager(
         options.setOnItemClickListenerInt { _: AdapterView<*>?, _: View?, _: Int, _: Long ->
             audioSwitch.isChecked = true
         }
-
-        resolutionSpinner = containerView.requireViewById(R.id.screenrecord_resolution_spinner)
-        fpsSpinner = containerView.requireViewById(R.id.screenrecord_fps_spinner)
-        timeLimitSpinner = containerView.requireViewById(R.id.screenrecord_time_limit_spinner)
-        fileSizeSpinner = containerView.requireViewById(R.id.screenrecord_file_size_spinner)
-        bitrateSpinner = containerView.requireViewById(R.id.screenrecord_bitrate_spinner)
-        setupSpinner(bitrateSpinner, R.array.screenrecord_bitrate_entries)
-        setupResolutionSpinner()
-        setupFpsSpinner()
-        setupSpinner(timeLimitSpinner, R.array.screenrecord_time_limit_entries)
-        setupSpinner(fileSizeSpinner, R.array.screenrecord_file_size_entries)
 
         // Disable HEVC when hardware accelerated codec is not available
         if (!hasHevcHwEncoder()) {
@@ -271,11 +264,6 @@ class ScreenRecordPermissionContentManager(
         val longerDuration = longerDurationSwitch.isChecked
         val skipTime = skipTimeSwitch.isChecked
         val hevc = hevcSwitch.isChecked
-        val bitrateMultiplier = BITRATE_MULTIPLIER_VALUES[bitrateSpinner.selectedItemPosition]
-        val resolutionMode = resolutionModeValues[resolutionSpinner.selectedItemPosition]
-        val fpsMode = selectedFpsMode
-        val timeLimitMs = TIME_LIMIT_VALUES_MS[timeLimitSpinner.selectedItemPosition]
-        val fileSizeBytes = FILE_SIZE_VALUES_BYTES[fileSizeSpinner.selectedItemPosition]
 
         savePrefs()
 
@@ -283,7 +271,7 @@ class ScreenRecordPermissionContentManager(
             if (skipTime) NO_DELAY else DELAY_MS,
             if (skipTime) NO_DELAY else INTERVAL_MS,
             {
-                screenRecordingStartStopInteractor.startRecording(
+                screenRecordingStartStopRepository.startRecording(
                     ScreenRecordingParameters(
                         captureTarget = captureTarget,
                         audioSource = audioMode,
@@ -292,117 +280,11 @@ class ScreenRecordPermissionContentManager(
                         lowQuality = lowQuality,
                         longerDuration = longerDuration,
                         hevc = hevc,
-                        bitrateMultiplier = bitrateMultiplier,
-                        resolutionMode = resolutionMode,
-                        fpsMode = fpsMode,
-                        timeLimitMs = timeLimitMs,
-                        fileSizeBytes = fileSizeBytes,
                     )
                 )
             },
-            { screenRecordingStartStopInteractor.stopRecording(StopReason.STOP_UNKNOWN) },
+            { screenRecordingStartStopRepository.stopRecording(StopReason.STOP_UNKNOWN) },
         )
-    }
-
-    private fun setupResolutionSpinner() {
-        val ctx = containerView.context
-        val dm = ctx.getSystemService(DisplayManager::class.java)
-        val metrics = DisplayMetrics()
-        dm.getDisplay(Display.DEFAULT_DISPLAY).getRealMetrics(metrics)
-        val screenW = metrics.widthPixels
-        val screenH = metrics.heightPixels
-        val longEdge = maxOf(screenW, screenH)
-
-        val entries = mutableListOf<CharSequence>(ctx.getString(R.string.screenrecord_resolution_auto))
-        resolutionModeValues.clear()
-        resolutionModeValues.add(0)
-
-        if (longEdge > 2560) {
-            entries.add(resolutionLabel(screenW, screenH, 2560))
-            resolutionModeValues.add(2560)
-        }
-        if (longEdge > 1920) {
-            entries.add(resolutionLabel(screenW, screenH, 1920))
-            resolutionModeValues.add(1920)
-        }
-        if (longEdge > 1280) {
-            entries.add(resolutionLabel(screenW, screenH, 1280))
-            resolutionModeValues.add(1280)
-        }
-
-        setSpinnerEntries(resolutionSpinner, entries)
-    }
-
-    private fun resolutionLabel(screenW: Int, screenH: Int, longEdgeCap: Int): String {
-        val scale = longEdgeCap.toDouble() / maxOf(screenW, screenH)
-        val w = (screenW * scale).toInt()
-        val h = (screenH * scale).toInt()
-        val className = when (longEdgeCap) {
-            2560 -> "1440p"
-            1920 -> "1080p"
-            else -> "720p"
-        }
-        return "$className  ($w × $h)"
-    }
-
-    private fun setupSpinner(spinner: Spinner, entriesRes: Int) {
-        setSpinnerEntries(
-            spinner,
-            containerView.context.resources.getTextArray(entriesRes).asList(),
-        )
-    }
-
-    private fun setupFpsSpinner() {
-        val ctx = containerView.context
-        val selectedFps =
-            if (fpsModeValues.isEmpty()) {
-                0
-            } else {
-                selectedFpsMode
-            }
-        val entries = mutableListOf<CharSequence>(ctx.getString(R.string.screenrecord_fps_auto))
-        fpsModeValues.clear()
-        fpsModeValues.add(0)
-
-        getDisplayRefreshRates().forEach { fps ->
-            entries.add(ctx.getString(R.string.screenrecord_fps_value, fps))
-            fpsModeValues.add(fps)
-        }
-
-        setSpinnerEntries(fpsSpinner, entries)
-        fpsSpinner.setSelection(fpsModeValues.indexOf(selectedFps).coerceAtLeast(0))
-    }
-
-    private fun setSpinnerEntries(spinner: Spinner, entries: List<CharSequence>) {
-        val adapter =
-            ArrayAdapter(
-                containerView.context,
-                R.layout.screenrecord_spinner_item,
-                entries,
-            )
-        adapter.setDropDownViewResource(R.layout.screenrecord_spinner_dropdown_item)
-        spinner.gravity = Gravity.END or Gravity.CENTER_VERTICAL
-        spinner.adapter = adapter
-    }
-
-    private fun getDisplayRefreshRates(): List<Int> {
-        val ctx = containerView.context
-        val displayManager = ctx.getSystemService(DisplayManager::class.java)
-        val display =
-            displayManager.getDisplay(selectedScreenShareOption.displayId)
-                ?: displayManager.getDisplay(Display.DEFAULT_DISPLAY)
-        val rates = mutableSetOf(30, 60)
-        val maxFps = ctx.resources.getInteger(R.integer.config_screenRecorderMaxFramerate)
-
-        display?.let {
-            rates.add(it.refreshRate.roundToInt())
-            it.supportedModes.forEach { mode ->
-                rates.add(mode.refreshRate.roundToInt())
-                mode.alternativeRefreshRates.forEach { rate -> rates.add(rate.roundToInt()) }
-            }
-        }
-
-        return rates.filter { it > 0 && (maxFps == 0 || it <= maxFps) }.sorted()
     }
 
     private fun hasHevcHwEncoder(): Boolean {
@@ -432,11 +314,6 @@ class ScreenRecordPermissionContentManager(
         Prefs.putInt(userContext, PREF_AUDIO_SOURCE, options.selectedItemPosition)
         Prefs.putInt(userContext, PREF_SKIP, if (skipTimeSwitch.isChecked) 1 else 0)
         Prefs.putInt(userContext, PREF_HEVC, if (hevcSwitch.isChecked) 1 else 0)
-        Prefs.putInt(userContext, PREF_BITRATE, bitrateSpinner.selectedItemPosition)
-        Prefs.putInt(userContext, PREF_RESOLUTION, resolutionModeValues[resolutionSpinner.selectedItemPosition])
-        Prefs.putInt(userContext, PREF_FPS, selectedFpsMode)
-        Prefs.putInt(userContext, PREF_TIME_LIMIT, timeLimitSpinner.selectedItemPosition)
-        Prefs.putInt(userContext, PREF_FILE_SIZE, fileSizeSpinner.selectedItemPosition)
     }
 
     private fun loadPrefs() {
@@ -448,18 +325,6 @@ class ScreenRecordPermissionContentManager(
         options.setSelection(Prefs.getInt(userContext, PREF_AUDIO_SOURCE, 0))
         skipTimeSwitch.isChecked = Prefs.getInt(userContext, PREF_SKIP, 0) == 1
         hevcSwitch.isChecked = Prefs.getInt(userContext, PREF_HEVC, 1) == 1
-        bitrateSpinner.setSelection(Prefs.getInt(userContext, PREF_BITRATE, 0))
-        val savedResMode = Prefs.getInt(userContext, PREF_RESOLUTION, 0)
-        resolutionSpinner.setSelection(resolutionModeValues.indexOf(savedResMode).coerceAtLeast(0))
-        val savedFpsMode =
-            when (val savedFps = Prefs.getInt(userContext, PREF_FPS, 0)) {
-                1 -> 30
-                2 -> 60
-                else -> savedFps
-            }
-        fpsSpinner.setSelection(fpsModeValues.indexOf(savedFpsMode).coerceAtLeast(0))
-        timeLimitSpinner.setSelection(Prefs.getInt(userContext, PREF_TIME_LIMIT, 0))
-        fileSizeSpinner.setSelection(Prefs.getInt(userContext, PREF_FILE_SIZE, 0))
     }
 
     private inner class CaptureTargetResultReceiver :
@@ -497,15 +362,6 @@ class ScreenRecordPermissionContentManager(
         private const val PREF_AUDIO_SOURCE = "screenrecord_audio_source"
         private const val PREF_SKIP = "screenrecord_skip_timer"
         private const val PREF_HEVC = "screenrecord_use_hevc"
-        private const val PREF_BITRATE = "screenrecord_bitrate"
-        private const val PREF_RESOLUTION = "screenrecord_resolution_mode"
-        private const val PREF_FPS = "screenrecord_fps_mode"
-        private const val PREF_TIME_LIMIT = "screenrecord_time_limit"
-        private const val PREF_FILE_SIZE = "screenrecord_file_size"
-
-        private val BITRATE_MULTIPLIER_VALUES = floatArrayOf(1.0f, 0.5f, 0.25f)
-        private val TIME_LIMIT_VALUES_MS = intArrayOf(0, 5 * 60 * 1000, 10 * 60 * 1000, 30 * 60 * 1000, 60 * 60 * 1000)
-        private val FILE_SIZE_VALUES_BYTES = longArrayOf(0L, 10L shl 20, 100L shl 20, 500L shl 20, 1L shl 30, 15L shl 30)
 
         fun createOptionList(displayManager: DisplayManager): List<ScreenShareOption> {
             val connectedDisplays = getConnectedDisplays(displayManager)
@@ -522,7 +378,12 @@ class ScreenRecordPermissionContentManager(
                     ),
                     ScreenShareOption(
                         ENTIRE_SCREEN,
-                        R.string.screenrecord_permission_dialog_option_text_entire_screen,
+                        if (connectedDisplays.isEmpty()) {
+                            R.string.screenrecord_permission_dialog_option_text_entire_screen
+                        } else {
+                            R.string
+                                .screenrecord_permission_dialog_option_text_entire_screen_for_display
+                        },
                         R.string.screenrecord_permission_dialog_warning_entire_screen,
                         startButtonText =
                             R.string.screenrecord_permission_dialog_continue_entire_screen,
@@ -535,7 +396,7 @@ class ScreenRecordPermissionContentManager(
                 options +=
                     connectedDisplays.map {
                         ScreenShareOption(
-                            ENTIRE_SCREEN,
+                            ENTIRE_SCREEN_EXTERNAL,
                             R.string
                                 .screenrecord_permission_dialog_option_text_entire_screen_for_display,
                             warningText =

@@ -33,10 +33,8 @@ fun interface BubbleSessionTracker {
 
     /** Session events that are tracked. */
     sealed class SessionEvent {
-        data class Started(
-            val forBubbleBar: Boolean,
-            val selectedBubblePackage: String,
-        ) : SessionEvent() {
+        data class Started(val forBubbleBar: Boolean, val selectedBubblePackage: String) :
+            SessionEvent() {
 
             companion object {
 
@@ -54,18 +52,14 @@ fun interface BubbleSessionTracker {
 
             companion object {
 
-                @JvmStatic
-                fun forBubbleBar() = Ended(forBubbleBar = true)
+                @JvmStatic fun forBubbleBar() = Ended(forBubbleBar = true)
 
-                @JvmStatic
-                fun forFloatingBubble() = Ended(forBubbleBar = false)
+                @JvmStatic fun forFloatingBubble() = Ended(forBubbleBar = false)
             }
         }
 
-        data class SwitchedBubble(
-            val forBubbleBar: Boolean,
-            val toBubblePackage: String,
-        ) : SessionEvent() {
+        data class SwitchedBubble(val forBubbleBar: Boolean, val toBubblePackage: String) :
+            SessionEvent() {
 
             companion object {
 
@@ -82,20 +76,24 @@ fun interface BubbleSessionTracker {
 
     companion object {
         @JvmStatic
-        fun BubbleViewProvider?.getBubblePackageForLogging() = when (this) {
-            is Bubble -> packageName
-            is BubbleOverflow -> "Overflow"
-            null -> {
-                BubbleLog.w("BubbleSessionTracker.getBubblePackageForLogging: null BubbleViewProvider")
-                "null"
+        fun BubbleViewProvider?.getBubblePackageForLogging() =
+            when (this) {
+                is Bubble -> packageName
+                is BubbleOverflow -> "Overflow"
+                null -> {
+                    BubbleLog.w(
+                        "BubbleSessionTracker.getBubblePackageForLogging: null BubbleViewProvider"
+                    )
+                    "null"
+                }
+                else -> {
+                    BubbleLog.w(
+                        "BubbleSessionTracker.getBubblePackageForLogging: " +
+                            "Unsupported type of BubbleViewProvider with key %s",
+                        key,
+                    )
+                    "unknown"
+                }
             }
-            else -> {
-                BubbleLog.w(
-                    "BubbleSessionTracker.getBubblePackageForLogging: Unsupported type of BubbleViewProvider with key %s",
-                    getKey()
-                )
-                "unknown"
-            }
-        }
     }
 }

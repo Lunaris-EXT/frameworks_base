@@ -71,6 +71,9 @@ public class ProtoFieldFilter {
     *                   length-delimited fields.
     */
     public ProtoFieldFilter(Predicate<Integer> fieldPredicate, int bufferSize) {
+        if (bufferSize <= 0) {
+            throw new IllegalArgumentException("Buffer size must be positive");
+        }
         this.mFieldPredicate = fieldPredicate;
         this.mBuffer = new byte[bufferSize];
     }

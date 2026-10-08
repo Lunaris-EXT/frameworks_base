@@ -24,7 +24,6 @@ import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.widget.ImageView
 import com.android.keyguard.AlphaOptimizedLinearLayout
-import com.android.systemui.Flags
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.StatusBarIconView
 import com.android.systemui.statusbar.core.NewStatusBarIcons
@@ -72,9 +71,7 @@ class ModernStatusBarWifiView(context: Context, attrs: AttributeSet?) :
     }
 
     public override fun onConfigurationChanged(newConfig: Configuration?) {
-        if (Flags.fixShadeHeaderWrongIconSize()) {
-            updateDimensions()
-        }
+        updateDimensions()
     }
 
     private fun updateDimensions() {

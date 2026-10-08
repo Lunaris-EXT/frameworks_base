@@ -60,6 +60,7 @@ import android.net.Uri;
 import android.os.Process;
 import android.os.UserHandle;
 import android.platform.test.annotations.AsbSecurityTest;
+import android.platform.test.annotations.EnableFlags;
 import android.platform.test.flag.junit.FlagsParameterization;
 import android.platform.test.flag.junit.SetFlagsRule;
 import android.util.ArraySet;
@@ -447,6 +448,7 @@ public class UriGrantsManagerServiceTest {
 
     @Test
     @AsbSecurityTest(cveBugId = 262884935)
+    @EnableFlags(android.permission.flags.Flags.FLAG_URI_GRANT_ATTRIBUTE_SIZE_CHECK_ENABLED)
     public void testPersistence_skipsMaliciouslyLongUri() throws Exception {
         final Uri safeUri = Uri.parse("content://com.example.safe/data");
         final GrantUri safeGrantUri = new GrantUri(USER_PRIMARY, safeUri, FLAG_READ);

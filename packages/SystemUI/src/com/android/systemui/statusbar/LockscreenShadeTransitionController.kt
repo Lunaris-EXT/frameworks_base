@@ -14,13 +14,16 @@ import androidx.annotation.FloatRange
 import androidx.annotation.VisibleForTesting
 import com.android.systemui.Dumpable
 import com.android.systemui.ExpandHelper
+import com.android.systemui.Flags
 import com.android.systemui.Gefingerpoken
 import com.android.systemui.classifier.Classifier
 import com.android.systemui.classifier.FalsingCollector
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.deviceentry.domain.interactor.DeviceEntryInteractor
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.keyguard.WakefulnessLifecycle
 import com.android.systemui.keyguard.domain.interactor.NaturalScrollingSettingObserver
+import com.android.systemui.media.controls.ui.controller.KeyguardMediaController
 import com.android.systemui.media.controls.ui.controller.MediaHierarchyManager
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.plugins.ActivityStarter.OnDismissAction
@@ -33,10 +36,10 @@ import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.shade.data.repository.ShadeRepository
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import com.android.systemui.shade.domain.interactor.ShadeLockscreenInteractor
+import com.android.systemui.shade.domain.interactor.ShadeModeInteractor
 import com.android.systemui.statusbar.notification.collection.NotificationEntry
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow
 import com.android.systemui.statusbar.notification.row.ExpandableView
-import com.android.systemui.statusbar.notification.shared.NotificationBundleUi
 import com.android.systemui.statusbar.notification.stack.AmbientState
 import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayoutController
 import com.android.systemui.statusbar.NTForbiddenSwipeDownQSController
@@ -66,6 +69,7 @@ constructor(
     private val falsingCollector: FalsingCollector,
     private val ambientState: AmbientState,
     private val mediaHierarchyManager: MediaHierarchyManager,
+    private val keyguardMediaController: KeyguardMediaController,
     private val scrimTransitionController: LockscreenShadeScrimTransitionController,
     private val keyguardTransitionControllerFactory:
         LockscreenShadeKeyguardTransitionController.Factory,
@@ -82,7 +86,9 @@ constructor(
     private val shadeRepository: ShadeRepository,
     private val shadeInteractor: ShadeInteractor,
     private val splitShadeStateController: SplitShadeStateController,
+    private val shadeModeInteractor: ShadeModeInteractor,
     private val shadeLockscreenInteractorLazy: Lazy<ShadeLockscreenInteractor>,
+    private val deviceEntryInteractor: DeviceEntryInteractor,
     naturalScrollingSettingObserver: NaturalScrollingSettingObserver,
     private val forbiddenSwipeDownQSController: NTForbiddenSwipeDownQSController
 ) : Dumpable {
@@ -92,7 +98,12 @@ constructor(
     var fractionToShade: Float = 0f
         private set
 
-    private var useSplitShade: Boolean = false
+    private var useSplitShadeLegacy: Boolean = false
+    private val useSplitShade: Boolean
+        get() =
+            if (SceneContainerFlag.isEnabled) shadeModeInteractor.isSplitShade
+            else useSplitShadeLegacy
+
     private lateinit var nsslController: NotificationStackScrollLayoutController
     lateinit var centralSurfaces: CentralSurfaces
 
@@ -279,7 +290,10 @@ constructor(
                 R.dimen.lockscreen_shade_status_bar_transition_distance
             )
 
-        useSplitShade = splitShadeStateController.shouldUseSplitNotificationShade(context.resources)
+        if (!SceneContainerFlag.isEnabled) {
+            useSplitShadeLegacy =
+                splitShadeStateController.shouldUseSplitNotificationShade(context.resources)
+        }
     }
 
     fun setStackScroller(nsslController: NotificationStackScrollLayoutController) {
@@ -287,8 +301,30 @@ constructor(
         touchHelper.expandCallback = nsslController.expandHelperCallback
     }
 
+    fun isLockdownShade(): Boolean {
+        val isLockedDownShade =
+            if (SceneContainerFlag.isEnabled)
+                (deviceEntryInteractor.isAuthenticationRequired() &&
+                    shadeInteractor.isAnyExpanded.value)
+            else nsslController.isInLockedDownShade()
+        return isLockedDownShade
+    }
+
     /** @return true if the interaction is accepted, false if it should be cancelled */
-    internal fun canDragDown(): Boolean {
+    internal fun canDragDown(startingChild: View? = null): Boolean {
+        if (SceneContainerFlag.isEnabled) {
+            // In flexiglass, dragging on lockscreen always opens the shade, notifications cannot be
+            // peeked anymore. Details on that decision in b/445863936.
+
+            if (startingChild != null && isLockdownShade()) {
+                if (startingChild is ExpandableNotificationRow) {
+                    // Only drag down on sensitive views, otherwise the ExpandHelper will take this
+                    return startingChild.entryAdapter?.isSensitive?.value == true
+                }
+            }
+            return false
+        }
+
         return (statusBarStateController.state == StatusBarState.KEYGUARD ||
             nsslController.isInLockedDownShade()) && (isQsFullyCollapsed || useSplitShade)
             && !forbiddenSwipeDownQSController.getForbiddenSwipeDownQS()
@@ -305,12 +341,12 @@ constructor(
 
     /** Called by the touch helper when when a gesture has completed all the way and released. */
     internal fun onDraggedDown(startingChild: View?, dragLengthY: Int) {
-        if (canDragDown()) {
+        if (canDragDown(startingChild)) {
             val cancelRunnable = Runnable {
                 logger.logGoingToLockedShadeAborted()
                 setDragDownAmountAnimated(0f)
             }
-            if (nsslController.isInLockedDownShade()) {
+            if (isLockdownShade()) {
                 logger.logDraggedDownLockDownShade(startingChild)
                 statusBarStateController.setLeaveOpenOnKeyguardHide(true)
                 activityStarter.dismissKeyguardThenExecute(
@@ -397,16 +433,14 @@ constructor(
         if (isDragDownAnywhereEnabled) {
             return true
         }
-        if (nsslController.isInLockedDownShade()) {
+        if (isLockdownShade()) {
             if (view == null) {
                 // Dragging down is allowed in general
                 return true
             }
             if (view is ExpandableNotificationRow) {
                 // Only drag down on sensitive views, otherwise the ExpandHelper will take this
-                return if (NotificationBundleUi.isEnabled)
-                    view.entryAdapter?.isSensitive?.value == true
-                else view.entryLegacy.isSensitive.value
+                return view.entryAdapter?.isSensitive?.value == true
             }
         }
         return false
@@ -416,7 +450,7 @@ constructor(
     internal val isDragDownAnywhereEnabled: Boolean
         get() =
             (statusBarStateController.getState() == StatusBarState.KEYGUARD &&
-                !keyguardBypassController.bypassEnabled &&
+                (!keyguardBypassController.bypassEnabled || Flags.expandQsBypassEnabled()) &&
                 (isQsFullyCollapsed || useSplitShade))
 
     /** The amount in pixels that the user has dragged down. */
@@ -444,6 +478,7 @@ constructor(
                         )
                     }
 
+                    keyguardMediaController.setTransitionToFullShadeAmount(field)
                     mediaHierarchyManager.setTransitionToFullShadeAmount(field)
                     scrimTransitionController.dragDownAmount = value
                     transitionToShadeAmountCommon(field)
@@ -582,11 +617,7 @@ constructor(
             // Indicate that the group expansion is changing at this time -- this way the group
             // and children backgrounds / divider animations will look correct.
             expandView.isGroupExpansionChanging = true
-            if (NotificationBundleUi.isEnabled) {
-                expandView.entryAdapter.sbn?.userId?.let { userId = it }
-            } else {
-                userId = expandView.entryLegacy.sbn.userId
-            }
+            expandView.entryAdapter.sbn?.userId?.let { userId = it }
         }
         var fullShadeNeedsBouncer =
             (!lockScreenUserManager.shouldShowLockscreenNotifications() ||
@@ -608,7 +639,7 @@ constructor(
             val cancelHandler = Runnable {
                 statusBarStateController.setLeaveOpenOnKeyguardHide(false)
                 draggedDownEntry?.apply {
-                    setUserLocked(false)
+                    setUserSwipingToExpandRow(false)
                     notifyHeightChanged(/* needsAnimation= */ false)
                     draggedDownEntry = null
                 }
@@ -656,7 +687,7 @@ constructor(
             }
         }
         draggedDownEntry?.apply {
-            setUserLocked(false)
+            setUserSwipingToExpandRow(false)
             draggedDownEntry = null
         }
     }
@@ -783,8 +814,14 @@ class DragDownHelper(
     private var slopMultiplier = 0f
     private var draggedFarEnough = false
     private var startingChild: ExpandableView? = null
+    var initialShadeLockdown = false
+        private set
+
     private var lastHeight = 0f
     var isDraggingDown = false
+        private set
+
+    var isDraggingUp = false
         private set
 
     private val isFalseTouch: Boolean
@@ -818,7 +855,9 @@ class DragDownHelper(
             MotionEvent.ACTION_DOWN -> {
                 draggedFarEnough = false
                 isDraggingDown = false
+                isDraggingUp = false
                 startingChild = null
+                initialShadeLockdown = false
                 initialTouchY = y
                 initialTouchX = x
             }
@@ -846,7 +885,22 @@ class DragDownHelper(
                             shadeRepository.setLegacyLockscreenShadeTracking(true)
                         }
                     }
+                    initialShadeLockdown = dragDownCallback.isLockdownShade()
                     return intercepted
+                } else {
+                    if (SceneContainerFlag.isEnabled) {
+                        // Check if we're dragging upwards and if we're not in the locked, open
+                        // shade
+                        val dragUpH = -1 * h
+                        if (
+                            dragUpH > touchSlop &&
+                                dragUpH > Math.abs(x - initialTouchX) &&
+                                !dragDownCallback.isLockdownShade()
+                        ) {
+                            isDraggingUp = true
+                            return true
+                        }
+                    }
                 }
             }
         }
@@ -854,18 +908,22 @@ class DragDownHelper(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (!isDraggingDown) {
+        if (!isDraggingDown && !isDraggingUp) {
             return false
         }
         val y = event.y
         when (event.actionMasked) {
             MotionEvent.ACTION_MOVE -> {
-                if (!forbiddenSwipeDownQSController.getForbiddenSwipeDownQS()) {
-                    lastHeight = y - initialTouchY
-                    captureStartingChild(initialTouchX, initialTouchY)
-                    dragDownCallback.dragDownAmount = lastHeight + dragDownAmountOnStart
-                    if (startingChild != null) {
-                        handleExpansion(lastHeight, startingChild!!)
+                lastHeight = y - initialTouchY
+                captureStartingChild(initialTouchX, initialTouchY)
+                dragDownCallback.dragDownAmount = lastHeight + dragDownAmountOnStart
+                if (startingChild != null && !SceneContainerFlag.isEnabled) {
+                    handleExpansion(lastHeight, startingChild!!)
+                }
+                if (lastHeight > minDragDistance) {
+                    if (!draggedFarEnough) {
+                        draggedFarEnough = true
+                        dragDownCallback.onCrossedThreshold(true)
                     }
                     if (lastHeight > minDragDistance) {
                         if (!draggedFarEnough) {
@@ -893,15 +951,25 @@ class DragDownHelper(
                 } else if (
                     !falsingManager.isUnlockingDisabled &&
                         !isFalseTouch &&
-                        dragDownCallback.canDragDown()
+                        dragDownCallback.canDragDown(startingChild)
                 ) {
                     val dragDown = y - initialTouchY
-                    dragDownCallback.onDraggedDown(startingChild, dragDown.toInt())
+
+                    if (SceneContainerFlag.isEnabled) {
+                        // If the drag started in the locked, open shade:
+                        //  call onDraggedDown to trigger the bouncer
+                        if (initialShadeLockdown) {
+                            dragDownCallback.onDraggedDown(startingChild, dragDown.toInt())
+                        }
+                    } else {
+                        dragDownCallback.onDraggedDown(startingChild, dragDown.toInt())
+                    }
                     if (startingChild != null) {
-                        expandCallback.setUserLockedChild(startingChild, false)
+                        expandCallback.setUserSwipingToExpand(startingChild, false)
                         startingChild = null
                     }
                     isDraggingDown = false
+                    isDraggingUp = false
                     shadeRepository.setLegacyLockscreenShadeTracking(false)
                     return true
                 } else {
@@ -920,11 +988,13 @@ class DragDownHelper(
     private fun captureStartingChild(x: Float, y: Float) {
         if (startingChild == null) {
             startingChild = findView(x, y)
-            if (startingChild != null) {
-                if (dragDownCallback.isDragDownEnabledForView(startingChild)) {
-                    expandCallback.setUserLockedChild(startingChild, true)
-                } else {
-                    startingChild = null
+            if (!SceneContainerFlag.isEnabled) {
+                if (startingChild != null) {
+                    if (dragDownCallback.isDragDownEnabledForView(startingChild)) {
+                        expandCallback.setUserSwipingToExpand(startingChild, true)
+                    } else {
+                        startingChild = null
+                    }
                 }
             }
         }
@@ -957,7 +1027,7 @@ class DragDownHelper(
         animationDuration: Long = SPRING_BACK_ANIMATION_LENGTH_MS,
     ) {
         if (child.actualHeight == child.collapsedHeight) {
-            expandCallback.setUserLockedChild(child, false)
+            expandCallback.setUserSwipingToExpand(child, false)
             return
         }
         val anim = ValueAnimator.ofInt(child.actualHeight, child.collapsedHeight)
@@ -970,7 +1040,7 @@ class DragDownHelper(
         anim.addListener(
             object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
-                    expandCallback.setUserLockedChild(child, false)
+                    expandCallback.setUserSwipingToExpand(child, false)
                 }
             }
         )
@@ -983,6 +1053,7 @@ class DragDownHelper(
             startingChild = null
         }
         isDraggingDown = false
+        isDraggingUp = false
         shadeRepository.setLegacyLockscreenShadeTracking(false)
         dragDownCallback.onDragDownReset()
     }

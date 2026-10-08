@@ -71,13 +71,8 @@ constructor(
     private var doubleTapEnabled = false
     private var singleTapEnabled = false
     private var doubleTapEnabledNative = false
-    private var doubleTapVibrate = false
-    private var singleTapVibrate = false
 
     init {
-	vibrator = notificationShadeWindowView.getContext().getSystemService(
-                Context.VIBRATOR_SERVICE) as Vibrator
-
         val tunable = Tunable { key: String?, value: String? ->
             when (key) {
                 Settings.Secure.DOUBLE_TAP_TO_WAKE ->

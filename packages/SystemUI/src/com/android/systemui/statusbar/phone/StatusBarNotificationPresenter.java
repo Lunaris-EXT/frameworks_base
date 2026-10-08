@@ -35,7 +35,6 @@ import android.service.vr.IVrStateCallbacks;
 import android.telecom.TelecomManager;
 import android.util.Log;
 import android.util.Slog;
-import android.view.View;
 
 import androidx.annotation.NonNull;
 
@@ -48,7 +47,6 @@ import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.ActivityStarter.OnDismissAction;
 import com.android.systemui.power.domain.interactor.PowerInteractor;
 import com.android.systemui.res.R;
-import com.android.systemui.scene.shared.flag.SceneContainerFlag;
 import com.android.systemui.shade.NotificationShadeWindowView;
 import com.android.systemui.shade.QuickSettingsController;
 import com.android.systemui.shade.ShadeViewController;
@@ -73,7 +71,6 @@ import com.android.systemui.statusbar.notification.interruption.NotificationInte
 import com.android.systemui.statusbar.notification.interruption.VisualInterruptionCondition;
 import com.android.systemui.statusbar.notification.interruption.VisualInterruptionDecisionProvider;
 import com.android.systemui.statusbar.notification.interruption.VisualInterruptionFilter;
-import com.android.systemui.statusbar.notification.interruption.VisualInterruptionRefactor;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.NotificationGutsManager;
 import com.android.systemui.statusbar.notification.row.NotificationGutsManager.OnSettingsClickListener;
@@ -199,16 +196,10 @@ class StatusBarNotificationPresenter implements NotificationPresenter, CommandQu
         initController.addPostInitTask(() -> {
             mNotifShadeEventSource.setShadeEmptiedCallback(this::maybeClosePanelForShadeEmptied);
             mNotifShadeEventSource.setNotifRemovedByUserCallback(this::maybeEndAmbientPulse);
-            if (VisualInterruptionRefactor.isEnabled()) {
-                visualInterruptionDecisionProvider.addCondition(mAlertsDisabledCondition);
-                visualInterruptionDecisionProvider.addCondition(mVrModeCondition);
-                visualInterruptionDecisionProvider.addFilter(mNeedsRedactionFilter);
-                visualInterruptionDecisionProvider.addCondition(mPanelsDisabledCondition);
-                visualInterruptionDecisionProvider.addLegacySuppressor(mLessBoringSuppressor);
-            } else {
-                visualInterruptionDecisionProvider.addLegacySuppressor(mInterruptSuppressor);
-                visualInterruptionDecisionProvider.addLegacySuppressor(mLessBoringSuppressor);
-            }
+            visualInterruptionDecisionProvider.addCondition(mAlertsDisabledCondition);
+            visualInterruptionDecisionProvider.addCondition(mVrModeCondition);
+            visualInterruptionDecisionProvider.addFilter(mNeedsRedactionFilter);
+            visualInterruptionDecisionProvider.addCondition(mPanelsDisabledCondition);
             mLockscreenUserManager.setUpWithPresenter(this);
             mGutsManager.setUpWithPresenter(
                     this, mNotifListContainer, mOnSettingsClickListener);
@@ -307,29 +298,6 @@ class StatusBarNotificationPresenter implements NotificationPresenter, CommandQu
     }
 
     @Override
-    public void onExpandClicked(NotificationEntry clickedEntry, View clickedView,
-            boolean nowExpanded) {
-        mHeadsUpManager.setExpanded(clickedEntry, nowExpanded);
-        mPowerInteractor.wakeUpIfDozing("NOTIFICATION_CLICK", PowerManager.WAKE_REASON_GESTURE);
-        if (nowExpanded) {
-            if (mNTForbiddenSwipeDownQSController.getForbiddenSwipeDownQS()) {
-                mStatusBarStateController.setLeaveOpenOnKeyguardHide(true);
-                // launch the bouncer if the device is locked
-                mActivityStarter.dismissKeyguardThenExecute(() -> false /* dismissAction */
-                        , null /* cancelRunnable */, false /* afterKeyguardGone */);
-            } else if (mStatusBarStateController.getState() == StatusBarState.KEYGUARD) {
-                mShadeTransitionController.goToLockedShade(
-                        clickedEntry.getRow(), /* needsQSAnimation = */ true);
-            } else if (clickedEntry.isSensitive().getValue() && isInLockedDownShade()) {
-                mStatusBarStateController.setLeaveOpenOnKeyguardHide(true);
-                // launch the bouncer if the device is locked
-                mActivityStarter.dismissKeyguardThenExecute(() -> false /* dismissAction */
-                        , null /* cancelRunnable */, false /* afterKeyguardGone */);
-            }
-        }
-    }
-
-    @Override
     public void onExpandClicked(ExpandableNotificationRow row, EntryAdapter clickedEntry,
             boolean nowExpanded) {
         mHeadsUpManager.setExpanded(clickedEntry.getKey(), row, nowExpanded);
@@ -342,22 +310,13 @@ class StatusBarNotificationPresenter implements NotificationPresenter, CommandQu
                         , null /* cancelRunnable */, false /* afterKeyguardGone */);
             } else if (mStatusBarStateController.getState() == StatusBarState.KEYGUARD) {
                 mShadeTransitionController.goToLockedShade(row, /* needsQSAnimation = */ true);
-            } else if (clickedEntry.isSensitive().getValue() && isInLockedDownShade()) {
+            } else if (clickedEntry.isSensitive().getValue()
+                        && mShadeTransitionController.isLockdownShade()) {
                 mStatusBarStateController.setLeaveOpenOnKeyguardHide(true);
                 // launch the bouncer if the device is locked
                 mActivityStarter.dismissKeyguardThenExecute(() -> false /* dismissAction */
                         , null /* cancelRunnable */, false /* afterKeyguardGone */);
             }
-        }
-    }
-
-    /** @return true if the Shade is shown over the Lockscreen, and the device is locked */
-    private boolean isInLockedDownShade() {
-        if (SceneContainerFlag.isEnabled()) {
-            return mStatusBarStateController.getState() == StatusBarState.SHADE_LOCKED
-                    && !mDeviceUnlockedInteractor.getDeviceUnlockStatus().getValue().isUnlocked();
-        } else {
-            return mDynamicPrivacyController.isInLockedDownShade();
         }
     }
 

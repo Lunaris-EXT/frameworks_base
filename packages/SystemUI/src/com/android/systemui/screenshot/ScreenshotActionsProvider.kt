@@ -18,22 +18,26 @@ package com.android.systemui.screenshot
 
 import android.app.assist.AssistContent
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
-import android.provider.Settings
+import android.provider.DocumentsContract
 import android.util.Log
 import androidx.appcompat.content.res.AppCompatResources
 import com.android.internal.logging.UiEventLogger
+import com.android.systemui.Flags
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.log.DebugLogger.debugLog
 import com.android.systemui.res.R
+import com.android.systemui.screencapture.record.domain.interactor.ScreenCaptureRecordFeaturesInteractor
+import com.android.systemui.screenshot.ScreenshotEvent.SCREENSHOT_COPY_TAPPED
 import com.android.systemui.screenshot.ScreenshotEvent.SCREENSHOT_DELETE_TAPPED
 import com.android.systemui.screenshot.ScreenshotEvent.SCREENSHOT_EDIT_TAPPED
-import com.android.systemui.screenshot.ScreenshotEvent.SCREENSHOT_LENS_TAPPED
+import com.android.systemui.screenshot.ScreenshotEvent.SCREENSHOT_OPEN_TAPPED
 import com.android.systemui.screenshot.ScreenshotEvent.SCREENSHOT_PREVIEW_TAPPED
 import com.android.systemui.screenshot.ScreenshotEvent.SCREENSHOT_SHARE_TAPPED
 import com.android.systemui.screenshot.ui.viewmodel.ActionButtonAppearance
 import com.android.systemui.screenshot.ui.viewmodel.PreviewAction
-import com.android.systemui.shared.Flags.screenshotContextUrl
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
@@ -41,12 +45,14 @@ import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
+typealias ScrollClickCallback = ((Uri) -> Unit)
+
 /**
  * Provides actions for screenshots. This class can be overridden by a vendor-specific SysUI
  * implementation.
  */
 interface ScreenshotActionsProvider {
-    fun onScrollChipReady(onClick: Runnable)
+    fun onScrollChipReady(onClick: ScrollClickCallback)
 
     fun onScrollChipInvalidated()
 
@@ -76,14 +82,16 @@ constructor(
     private val context: Context,
     private val uiEventLogger: UiEventLogger,
     private val actionIntentCreator: ActionIntentCreator,
+    private val packageManager: PackageManager,
     @Application private val applicationScope: CoroutineScope,
+    screenCaptureRecordFeaturesInteractor: ScreenCaptureRecordFeaturesInteractor,
     @Assisted val requestId: UUID,
     @Assisted val request: ScreenshotData,
     @Assisted val actionExecutor: ActionExecutor,
     @Assisted val actionsCallback: ScreenshotActionsController.ActionsCallback,
 ) : ScreenshotActionsProvider {
     private var addedScrollChip = false
-    private var onScrollClick: Runnable? = null
+    private var onScrollClick: ScrollClickCallback? = null
     private var pendingAction: (suspend (ScreenshotSavedResult) -> Unit)? = null
     private var result: ScreenshotSavedResult? = null
     private var webUri: Uri? = null
@@ -123,7 +131,7 @@ constructor(
             onDeferrableActionTapped { result ->
                 val uri = webUri
                 val shareIntent =
-                    if (screenshotContextUrl() && uri != null) {
+                    if (uri != null) {
                         actionIntentCreator.createShareWithText(
                             result.uri,
                             extraText = uri.toString(),
@@ -131,23 +139,29 @@ constructor(
                     } else {
                         actionIntentCreator.createShareWithSubject(result.uri, result.subject)
                     }
+
                 actionExecutor.startSharedTransition(shareIntent, result.user, false)
             }
         }
 
-        if (isClipboardOnly) {
+        if (screenCaptureRecordFeaturesInteractor.isLargeScreenScreencaptureEnabled) {
             actionsCallback.provideActionButton(
                 ActionButtonAppearance(
-                    AppCompatResources.getDrawable(context, R.drawable.ic_screenshot_save),
+                    AppCompatResources.getDrawable(context, R.drawable.ic_content_copy),
                     null,
-                    context.resources.getString(R.string.screenshot_save_to_storage_label),
+                    context.resources.getString(R.string.screenshot_copy_description),
                 ),
                 showDuringEntrance = true,
             ) {
-                debugLog(LogConfig.DEBUG_ACTIONS) { "Save to storage tapped" }
-                actionsCallback.saveToStorage()
+                debugLog(LogConfig.DEBUG_ACTIONS) { "Copy tapped" }
+                uiEventLogger.log(SCREENSHOT_COPY_TAPPED, 0, request.packageNameString)
+                onDeferrableActionTapped { result ->
+                    actionExecutor.copyScreenshotToClipboard(result.uri)
+                }
             }
         } else {
+            // The edit button is intentionally hidden on large-screen devices since the screenshot
+            // thumbnail serves the same action.
             actionsCallback.provideActionButton(
                 ActionButtonAppearance(
                     AppCompatResources.getDrawable(context, R.drawable.ic_screenshot_edit),
@@ -164,6 +178,33 @@ constructor(
                         result.user,
                         true,
                     )
+                }
+            }
+        }
+
+        // Check if there is an appropriate package to open up the screenshot's directory before
+        // showing the open button.
+        if (
+            screenCaptureRecordFeaturesInteractor.isLargeScreenScreencaptureEnabled &&
+                shouldShowOpenButton()
+        ) {
+            actionsCallback.provideActionButton(
+                ActionButtonAppearance(
+                    context.getDrawable(R.drawable.ic_screen_capture_folder),
+                    null,
+                    context.resources.getString(R.string.screenshot_open_in_folder_description),
+                ),
+                showDuringEntrance = true,
+            ) {
+                debugLog(LogConfig.DEBUG_ACTIONS) { "Open tapped" }
+                uiEventLogger.log(SCREENSHOT_OPEN_TAPPED, 0, request.packageNameString)
+                onDeferrableActionTapped { result ->
+                    val intent = actionIntentCreator.createOpenInFiles(result.uri)
+                    if (intent != null) {
+                        actionExecutor.startSharedTransition(intent, result.user, false)
+                    } else {
+                        Log.e(TAG, "Failed to create Intent for mediaStoreUri: ${result.uri} ")
+                    }
                 }
             }
         }
@@ -205,18 +246,22 @@ constructor(
         }
     }
 
-    override fun onScrollChipReady(onClick: Runnable) {
+    override fun onScrollChipReady(onClick: ScrollClickCallback) {
         onScrollClick = onClick
         if (!addedScrollChip) {
             actionsCallback.provideActionButton(
                 ActionButtonAppearance(
                     AppCompatResources.getDrawable(context, R.drawable.ic_screenshot_scroll),
-                    context.resources.getString(R.string.screenshot_scroll_label),
+                    null,
                     context.resources.getString(R.string.screenshot_scroll_label),
                 ),
                 showDuringEntrance = true,
             ) {
-                onScrollClick?.run()
+                if (Flags.deleteAfterScrollCapture()) {
+                    onDeferrableActionTapped { result -> onScrollClick?.invoke(result.uri) }
+                } else {
+                    onScrollClick?.invoke(Uri.EMPTY)
+                }
             }
             addedScrollChip = true
         }
@@ -242,6 +287,17 @@ constructor(
     private fun onDeferrableActionTapped(onResult: suspend (ScreenshotSavedResult) -> Unit) {
         result?.let { applicationScope.launch { onResult.invoke(it) } }
             ?: run { pendingAction = onResult }
+    }
+
+    private fun shouldShowOpenButton(): Boolean {
+        val filesIntent = Intent(Intent.ACTION_VIEW)
+        filesIntent.setType(DocumentsContract.Document.MIME_TYPE_DIR)
+        filesIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        filesIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        filesIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        val result = packageManager.resolveActivity(filesIntent, 0) != null
+
+        return result
     }
 
     @AssistedFactory

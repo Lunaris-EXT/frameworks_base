@@ -16,6 +16,7 @@
 
 package com.android.systemui.statusbar.pipeline.battery.ui.binder
 
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -68,7 +69,7 @@ object UnifiedBatteryViewBinder {
                             BatteryWithPercent(
                                 modifier =
                                     Modifier
-                                        .wrapContentWidth()
+                                        .wrapContentSize()
                                         .sysuiResTag(BatteryViewModel.TEST_TAG),
                                 viewModel = viewModel,
                                 isDarkProvider = { isDark },

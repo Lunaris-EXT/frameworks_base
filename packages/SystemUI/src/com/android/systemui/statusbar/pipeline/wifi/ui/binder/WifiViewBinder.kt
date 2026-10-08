@@ -24,18 +24,14 @@ import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.app.tracing.coroutines.launchTraced as launch
-import com.android.systemui.Flags.statusBarStaticInoutIndicators
 import com.android.systemui.common.ui.binder.IconViewBinder
 import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.StatusBarIconView
 import com.android.systemui.statusbar.connectivity.ThemeIconController
 import com.android.systemui.statusbar.StatusBarIconView.STATE_HIDDEN
-import com.android.systemui.statusbar.core.NewStatusBarIcons
 import com.android.systemui.statusbar.pipeline.shared.ui.binder.ModernStatusBarViewBinding
 import com.android.systemui.statusbar.pipeline.shared.ui.binder.ModernStatusBarViewVisibilityHelper
-import com.android.systemui.statusbar.pipeline.shared.ui.binder.StatusBarViewBinderConstants.ALPHA_ACTIVE
-import com.android.systemui.statusbar.pipeline.shared.ui.binder.StatusBarViewBinderConstants.ALPHA_INACTIVE
 import com.android.systemui.statusbar.pipeline.wifi.ui.model.WifiIcon
 import com.android.systemui.statusbar.WifiStandardImageView
 import com.android.systemui.statusbar.WifiStandardViewController
@@ -69,10 +65,6 @@ object WifiViewBinder {
         val activityInView = view.requireViewById<ImageView>(R.id.wifi_in)
         val activityOutView = view.requireViewById<ImageView>(R.id.wifi_out)
         val activityContainerView = view.requireViewById<View>(R.id.inout_container)
-        val airplaneSpacer = view.requireViewById<View>(R.id.wifi_airplane_spacer)
-        val signalSpacer = view.requireViewById<View>(R.id.wifi_signal_spacer)
-        val wifiStandardView = view.requireViewById<WifiStandardImageView>(R.id.wifi_standard)
-        wifiStandardView.setFactory(wifiStandardFactory)
 
         view.isVisible = true
         iconView.isVisible = true
@@ -155,57 +147,21 @@ object WifiViewBinder {
 
                 launch { decorTint.collect { tint -> dotView.setDecorColor(tint) } }
 
-                if (statusBarStaticInoutIndicators()) {
-                    // Set the opacity of the activity indicators
-                    launch {
-                        viewModel.isActivityInViewVisible.distinctUntilChanged().collect { visible
-                            ->
-                            activityInView.imageAlpha =
-                                (if (visible) ALPHA_ACTIVE else ALPHA_INACTIVE)
-                        }
+                launch {
+                    viewModel.isActivityInViewVisible.distinctUntilChanged().collect { visible ->
+                        activityInView.isVisible = visible
                     }
+                }
 
-                    launch {
-                        viewModel.isActivityOutViewVisible.distinctUntilChanged().collect { visible
-                            ->
-                            activityOutView.imageAlpha =
-                                (if (visible) ALPHA_ACTIVE else ALPHA_INACTIVE)
-                        }
-                    }
-                } else {
-                    launch {
-                        viewModel.isActivityInViewVisible.distinctUntilChanged().collect { visible
-                            ->
-                            activityInView.isVisible = visible
-                        }
-                    }
-
-                    launch {
-                        viewModel.isActivityOutViewVisible.distinctUntilChanged().collect { visible
-                            ->
-                            activityOutView.isVisible = visible
-                        }
+                launch {
+                    viewModel.isActivityOutViewVisible.distinctUntilChanged().collect { visible ->
+                        activityOutView.isVisible = visible
                     }
                 }
 
                 launch {
                     viewModel.isActivityContainerVisible.distinctUntilChanged().collect { visible ->
                         activityContainerView.isVisible = visible
-                    }
-                }
-
-                if (!NewStatusBarIcons.isEnabled) {
-                    launch {
-                        viewModel.isAirplaneSpacerVisible.distinctUntilChanged().collect { visible
-                            ->
-                            airplaneSpacer.isVisible = visible
-                        }
-                    }
-
-                    launch {
-                        viewModel.isSignalSpacerVisible.distinctUntilChanged().collect { visible ->
-                            signalSpacer.isVisible = visible
-                        }
                     }
                 }
 

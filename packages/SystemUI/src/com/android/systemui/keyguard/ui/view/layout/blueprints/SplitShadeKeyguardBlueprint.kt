@@ -32,11 +32,7 @@ import com.android.systemui.keyguard.ui.view.layout.sections.DefaultShortcutsSec
 import com.android.systemui.keyguard.ui.view.layout.sections.DefaultStatusBarSection
 import com.android.systemui.keyguard.ui.view.layout.sections.AxDynamicBarKeyguardChipSection
 import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardSectionsModule
-import com.android.systemui.keyguard.ui.view.layout.sections.InfoWidgetsSection
-import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardClockStyleSection
-import com.android.systemui.keyguard.ui.view.layout.sections.AODStyleSection
 import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardSliceViewSection
-import com.android.systemui.keyguard.ui.view.layout.sections.KeyguardWeatherViewSection
 import com.android.systemui.keyguard.ui.view.layout.sections.SmartspaceSection
 import com.android.systemui.keyguard.ui.view.layout.sections.SplitShadeGuidelines
 import com.android.systemui.keyguard.ui.view.layout.sections.SplitShadeMediaSection
@@ -63,6 +59,8 @@ constructor(
     @Named(KeyguardSectionsModule.KEYGUARD_AMBIENT_INDICATION_AREA_SECTION)
     defaultAmbientIndicationAreaSection: Optional<KeyguardSection>,
     defaultSettingsPopupMenuSection: DefaultSettingsPopupMenuSection,
+    @Named(KeyguardSectionsModule.KEYGUARD_BATTERY_CHARGING_SECTION)
+    batteryChargingPopupMenuSection: Optional<KeyguardSection>,
     defaultStatusBarSection: DefaultStatusBarSection,
     splitShadeNotificationStackScrollLayoutSection: SplitShadeNotificationStackScrollLayoutSection,
     splitShadeGuidelines: SplitShadeGuidelines,
@@ -70,6 +68,7 @@ constructor(
     aodNotificationIconsSection: AodNotificationIconsSection,
     aodBurnInSection: AodBurnInSection,
     clockSection: ClockSection,
+    keyguardSliceViewSection: KeyguardSliceViewSection,
     smartspaceSection: SmartspaceSection,
     infoWidgetsSection: InfoWidgetsSection,
     keyguardClockStyleSection: KeyguardClockStyleSection,
@@ -90,6 +89,7 @@ constructor(
             defaultShortcutsSection,
             defaultAmbientIndicationAreaSection.getOrNull(),
             defaultSettingsPopupMenuSection,
+            batteryChargingPopupMenuSection.getOrNull(),
             defaultStatusBarSection,
             splitShadeNotificationStackScrollLayoutSection,
             splitShadeGuidelines,
@@ -98,11 +98,7 @@ constructor(
             smartspaceSection,
             aodBurnInSection,
             clockSection,
-            keyguardWeatherViewSection,
             keyguardSliceViewSection,
-            infoWidgetsSection,
-            keyguardClockStyleSection,
-            aodStyleSection,
             mediaSection,
             defaultDeviceEntrySection, // Add LAST: Intentionally has z-order above other views.
         )

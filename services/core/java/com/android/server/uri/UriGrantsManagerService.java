@@ -100,6 +100,7 @@ import com.android.server.IoThread;
 import com.android.server.LocalServices;
 import com.android.server.SystemService;
 import com.android.server.SystemServiceManager;
+import com.android.server.privatecompute.PccSandboxManagerInternal;
 
 import com.google.android.collect.Lists;
 import com.google.android.collect.Maps;
@@ -185,7 +186,7 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
         this(SystemServiceManager.ensureSystemDir(), "uri-grants");
     }
 
-    private UriGrantsManagerService(File systemDir, String commitTag) {
+    UriGrantsManagerService(File systemDir, String commitTag) {
         mH = new H(IoThread.get().getLooper());
         final File file = new File(systemDir, "urigrants.xml");
         mGrantFile = (commitTag != null) ? new AtomicFile(file, commitTag) : new AtomicFile(file);
@@ -263,6 +264,15 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
         return ActivityManager.checkComponentPermission(permission, uid, owningUid, exported);
     }
 
+    @VisibleForTesting
+    protected int getAppUidForPrivateComputeCoreUid(int pccUid) {
+        try {
+            return AppGlobals.getPackageManager().getAppUidForPrivateComputeCoreUid(pccUid);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
     /**
      * Grant uri permissions to the specified app.
      *
@@ -326,9 +336,8 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
         final int callingUid = Binder.getCallingUid();
         final int callingUserId = UserHandle.getUserId(callingUid);
         final PackageManagerInternal pm = LocalServices.getService(PackageManagerInternal.class);
-        final int packageUid = pm.getPackageUid(packageName,
-                MATCH_DIRECT_BOOT_AWARE | MATCH_DIRECT_BOOT_UNAWARE, callingUserId);
-        if (packageUid != callingUid) {
+        if (!pm.isSameApp(packageName, MATCH_DIRECT_BOOT_AWARE | MATCH_DIRECT_BOOT_UNAWARE,
+                callingUid, callingUserId)) {
             throw new SecurityException(
                     "Package " + packageName + " does not belong to calling UID " + callingUid);
         }
@@ -757,7 +766,7 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
         if (!hasPermission) {
             throw new SecurityException("You can't launch this activity because you don't have the"
                     + " required " + ActivityInfo.requiredContentUriPermissionToShortString(
-                            requireContentUriPermissionFromCaller) + " access to " + grantUri.uri);
+                    requireContentUriPermissionFromCaller) + " access to " + grantUri.uri);
         }
     }
 
@@ -912,7 +921,7 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
                                 MATCH_DIRECT_BOOT_AWARE | MATCH_DIRECT_BOOT_UNAWARE, SYSTEM_UID);
                         if (pi != null && sourcePkg.equals(pi.packageName)) {
                             int targetUid = mPmInternal.getPackageUid(
-                                        targetPkg, MATCH_UNINSTALLED_PACKAGES, targetUserId);
+                                    targetPkg, MATCH_UNINSTALLED_PACKAGES, targetUserId);
                             if (targetUid != -1) {
                                 final GrantUri grantUri = new GrantUri(sourceUserId, uri,
                                         prefix ? Intent.FLAG_GRANT_PREFIX_URI_PERMISSION : 0);
@@ -1229,6 +1238,32 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
             forceMet = true;
         }
 
+        if (!android.app.privatecompute.flags.Flags.enablePccFrameworkSupport()
+                || !Process.isPrivateComputeCoreUid(uid)) {
+            return readMet && writeMet && forceMet;
+        }
+
+        // PCC UIDs must never write to content providers that are not themselves PCC or
+        // trusted.
+        if ((modeFlags & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0) {
+            if (!isPccOrTrustedProvider(pi)) {
+                return false;
+            }
+        }
+
+        // PCC UIDs should be able to read data that their "Host App" can read,
+        // provided the required permission is available to PCC UIDs.
+        if ((modeFlags & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
+            final int hostUid = getAppUidForPrivateComputeCoreUid(uid);
+            // If the host UID is valid and different from the PCC UID (to avoid recursion)
+            if (hostUid >= 0 && hostUid != uid) {
+                if (checkHoldingPermissionsInternalUnlocked(pi, grantUri, hostUid,
+                        modeFlags, considerUidPermissions)) {
+                    return true;
+                }
+            }
+        }
+        // Standard Fallback
         return readMet && writeMet && forceMet;
     }
 
@@ -1264,6 +1299,18 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
             mH.sendMessageDelayed(mH.obtainMessage(PERSIST_URI_GRANTS_MSG),
                     10 * DateUtils.SECOND_IN_MILLIS);
         }
+    }
+
+    private boolean isPccOrTrustedProvider(ProviderInfo pi) {
+        final int providerUid = pi.getUid();
+        if (Process.isPrivateComputeCoreUid(providerUid)) {
+            return true;
+        }
+        final PccSandboxManagerInternal pccSandboxManager = LocalServices.getService(
+                PccSandboxManagerInternal.class);
+        return (pccSandboxManager != null
+                && pccSandboxManager.isPccTrustedSystemComponent(providerUid,
+                        pi.packageName));
     }
 
     private void enforceNotIsolatedCaller(String caller) {
@@ -1338,6 +1385,18 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
 
         boolean targetHoldsPermission = false;
         if (targetUid >= 0) {
+            // PCC UIDs must never be granted write permissions to content providers that are not
+            // themselves PCC or trusted.
+            if (android.app.privatecompute.flags.Flags.enablePccFrameworkSupport()
+                    && Process.isPrivateComputeCoreUid(targetUid)) {
+                if ((modeFlags & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0) {
+                    if (!isPccOrTrustedProvider(pi)) {
+                        throw new SecurityException("PCC UIDs cannot be granted write access to"
+                                + " Non-PCC providers");
+                    }
+                }
+            }
+
             // First...  does the target actually need this permission?
             if (checkHoldingPermissionsUnlocked(pi, grantUri, targetUid, modeFlags)) {
                 // No need to grant the target this permission.
@@ -1673,23 +1732,25 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
             out.startDocument(null, true);
             out.startTag(null, TAG_URI_GRANTS);
             for (UriPermission.Snapshot perm : persist) {
-                // Do pre-validation then serialize
-                if (perm.uri == null || perm.sourcePkg == null || perm.targetPkg == null) {
-                    Slog.w(TAG, "Skipping grant with missing data");
-                    continue;
-                }
-                if (!stringSizeWithinBounds(perm.uri.toString(), MAX_XML_STRING_ATTR_SIZE)) {
-                    Slog.w(TAG, "Skipping grant: URI too long");
-                    continue;
-                }
-                if (!stringSizeWithinBounds(
-                        perm.sourcePkg,
-                        MAX_PACKAGE_NAME_SIZE)
-                        || !stringSizeWithinBounds(
-                        perm.targetPkg,
-                        MAX_PACKAGE_NAME_SIZE)) {
-                    Slog.w(TAG, "Skipping grant: Package name too long");
-                    continue;
+                if (android.permission.flags.Flags.uriGrantAttributeSizeCheckEnabled()) {
+                    // Do pre-validation then serialize
+                    if (perm.uri == null || perm.sourcePkg == null || perm.targetPkg == null) {
+                        Slog.w(TAG, "Skipping grant with missing data");
+                        continue;
+                    }
+                    if (!stringSizeWithinBounds(perm.uri.toString(), MAX_XML_STRING_ATTR_SIZE)) {
+                        Slog.w(TAG, "Skipping grant: URI too long");
+                        continue;
+                    }
+                    if (!stringSizeWithinBounds(
+                            perm.sourcePkg,
+                            MAX_PACKAGE_NAME_SIZE)
+                            || !stringSizeWithinBounds(
+                            perm.targetPkg,
+                            MAX_PACKAGE_NAME_SIZE)) {
+                        Slog.w(TAG, "Skipping grant: Package name too long");
+                        continue;
+                    }
                 }
 
                 out.startTag(null, TAG_URI_GRANT);
@@ -1876,7 +1937,8 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
                     }
                     for (int i = 0; i < mGrantedUriPermissions.size(); i++) {
                         int uid = mGrantedUriPermissions.keyAt(i);
-                        if (dumpUid >= -1 && UserHandle.getAppId(uid) != dumpUid) {
+                        if (dumpUid >= -1 && !mPmInternal.isSameApp(dumpPackage, uid,
+                                UserHandle.getUserId(uid))) {
                             continue;
                         }
                         final ArrayMap<GrantUri, UriPermission> perms =

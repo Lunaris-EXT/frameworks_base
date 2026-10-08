@@ -18,6 +18,7 @@ package com.android.server.security.advancedprotection.features;
 
 import static android.security.advancedprotection.AdvancedProtectionManager.ADVANCED_PROTECTION_SYSTEM_ENTITY;
 import static android.security.advancedprotection.AdvancedProtectionManager.FEATURE_ID_DISALLOW_CELLULAR_2G;
+import static android.security.advancedprotection.AdvancedProtectionManager.FeatureId;
 
 import android.annotation.NonNull;
 import android.app.admin.DevicePolicyManager;
@@ -32,8 +33,6 @@ import android.util.Slog;
 public final class DisallowCellular2GAdvancedProtectionHook extends AdvancedProtectionHook {
     private static final String TAG = "AdvancedProtectionDisallowCellular2G";
 
-    private final AdvancedProtectionFeature mFeature =
-            new AdvancedProtectionFeature(FEATURE_ID_DISALLOW_CELLULAR_2G);
     private final DevicePolicyManager mDevicePolicyManager;
     private final PackageManager mPackageManager;
     private final TelephonyManager mTelephonyManager;
@@ -47,10 +46,9 @@ public final class DisallowCellular2GAdvancedProtectionHook extends AdvancedProt
         onAdvancedProtectionChanged(enabled);
     }
 
-    @NonNull
     @Override
-    public AdvancedProtectionFeature getFeature() {
-        return mFeature;
+    public @FeatureId int getFeatureId() {
+        return FEATURE_ID_DISALLOW_CELLULAR_2G;
     }
 
     @Override

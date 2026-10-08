@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.wrapContentWidth
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -122,7 +121,7 @@ private fun UnifiedBatteryChip(level: Int) {
     )
 }
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+
 @Composable
 private fun BatteryAndPercentChip(
     level: Int,
@@ -161,13 +160,6 @@ private fun BatteryAndPercentChip(
         if (isText || showPercentNextToIcon) {
             Text(
                 text = NumberFormat.getPercentInstance().format(level / 100f),
-                color = BatteryColors.DarkTheme.Default.fill,
-                style = MaterialTheme.typography.labelLargeEmphasized,
-            )
-        }
-        if (isText) {
-            Text(
-                text = "\u26A1",
                 color = BatteryColors.DarkTheme.Default.fill,
                 style = MaterialTheme.typography.labelLargeEmphasized,
             )

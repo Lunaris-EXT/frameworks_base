@@ -21,21 +21,19 @@ import androidx.annotation.DrawableRes
 import androidx.annotation.FloatRange
 import androidx.annotation.StringRes
 import androidx.compose.runtime.getValue
-import androidx.core.content.res.ResourcesCompat
+import com.android.systemui.brightness.domain.interactor.BrightnessMirrorShowingInteractor
 import com.android.systemui.brightness.domain.interactor.BrightnessPolicyEnforcementInteractor
 import com.android.systemui.brightness.domain.interactor.ScreenBrightnessInteractor
-import com.android.systemui.brightness.shared.model.GammaBrightness
+import com.android.systemui.brightness.domain.model.GammaBrightness
 import com.android.systemui.classifier.Classifier
 import com.android.systemui.classifier.domain.interactor.FalsingInteractor
 import com.android.systemui.common.shared.model.Icon
 import com.android.systemui.common.shared.model.asIcon
 import com.android.systemui.haptics.slider.compose.ui.SliderHapticsViewModel
-import com.android.systemui.lifecycle.ExclusiveActivatable
-import com.android.systemui.lifecycle.Hydrator
+import com.android.systemui.lifecycle.HydratedActivatable
 import com.android.systemui.res.R
-import com.android.systemui.settings.brightness.domain.interactor.BrightnessMirrorShowingInteractor
 import com.android.systemui.settings.brightness.ui.BrightnessWarningToast
-import com.android.systemui.utils.PolicyRestriction
+import com.android.systemui.util.policy.PolicyRestriction
 import dagger.Lazy
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
@@ -60,9 +58,10 @@ constructor(
     val hapticsViewModelFactory: SliderHapticsViewModel.Factory,
     private val brightnessMirrorShowingInteractorLazy: Lazy<BrightnessMirrorShowingInteractor>,
     private val falsingInteractor: FalsingInteractor,
-    @Assisted private val supportsMirroring: Boolean,
+    @Assisted val supportsMirroring: Boolean,
     private val brightnessWarningToast: BrightnessWarningToast,
-) : ExclusiveActivatable() {
+    private val imageLoader: ImageLoader,
+) : HydratedActivatable() {
 
     init {
         if (supportsMirroring) {
@@ -71,14 +70,11 @@ constructor(
         }
     }
 
-    private val hydrator = Hydrator("BrightnessSliderViewModel.hydrator")
-
     val currentBrightness by
-        hydrator.hydratedStateOf(
-            "currentBrightness",
-            initialValue,
-            screenBrightnessInteractor.gammaBrightness,
-        )
+        screenBrightnessInteractor.gammaBrightness.hydratedStateOf(initialValue)
+
+    val autoMode by
+        screenBrightnessInteractor.isAutoBrightnessEnabledFlow.hydratedStateOf(false)
 
     val autoMode by hydrator.hydratedStateOf(
         traceName = "autoMode",
@@ -109,13 +105,14 @@ constructor(
 
     suspend fun loadImage(@DrawableRes resId: Int, context: Context): Icon.Loaded? {
         return withTimeoutOrNull(500L) {
-            val drawable = ResourcesCompat.getDrawable(
-                context.resources,
-                resId,
-                context.theme
-            ) ?: return@withTimeoutOrNull null
-
-            drawable.asIcon(null, resId)
+            imageLoader
+                .loadDrawable(
+                    android.graphics.drawable.Icon.createWithResource(context, resId),
+                    context = context,
+                    maxHeight = 200,
+                    maxWidth = 200,
+                )
+                ?.asIcon(null, resId)
         }
     }
 
@@ -140,18 +137,12 @@ constructor(
     }
 
     val showMirror by
-        hydrator.hydratedStateOf(
-            "showMirror",
-            if (supportsMirroring) {
+        if (supportsMirroring) {
                 brightnessMirrorShowingInteractorLazy.get().isShowing
             } else {
                 MutableStateFlow(false)
-            },
-        )
-
-    override suspend fun onActivated(): Nothing {
-        hydrator.activate()
-    }
+            }
+            .hydratedStateOf()
 
     @AssistedFactory
     interface Factory {

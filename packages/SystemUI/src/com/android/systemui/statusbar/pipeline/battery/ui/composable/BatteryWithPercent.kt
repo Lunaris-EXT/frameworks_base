@@ -33,12 +33,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onLayoutRectChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import com.android.systemui.statusbar.phone.domain.interactor.IsAreaDark
 import com.android.systemui.statusbar.pipeline.battery.data.repository.BatteryRepository
 import com.android.systemui.statusbar.pipeline.battery.shared.ui.BatteryColors
 import com.android.systemui.statusbar.pipeline.battery.ui.viewmodel.BatteryViewModel
-import com.android.systemui.statusbar.pipeline.battery.ui.viewmodel.ColorProfile
 
 @Composable
 fun BatteryWithPercent(
@@ -55,15 +56,25 @@ fun BatteryWithPercent(
 
     val textStyle =
         with(LocalDensity.current) {
-            BatteryViewModel.getStatusBarBatteryTextStyle(LocalContext.current)
+            BatteryViewModel.getStatusBarBatteryTextStyle(LocalContext.current).copy(
+                platformStyle = PlatformTextStyle(
+                    includeFontPadding = false
+                ),
+                lineHeightStyle = LineHeightStyle(
+                    alignment = LineHeightStyle.Alignment.Center,
+                    trim = LineHeightStyle.Trim.Both,
+                )
+            )
         }
 
     var bounds by remember { mutableStateOf(Rect()) }
 
-    val colorProfile = viewModel.colorProfile
     val colorProducer = {
-        if (isDarkProvider().isDarkTheme(bounds)) colorProfile.dark.fill
-        else colorProfile.light.fill
+        if (isDarkProvider().isDarkTheme(bounds)) {
+            BatteryColors.DarkTheme.Default.fill
+        } else {
+            BatteryColors.LightTheme.Default.fill
+        }
     }
 
     Row(
@@ -90,17 +101,9 @@ fun BatteryWithPercent(
                     color = colorProducer,
                     style = textStyle,
                     maxLines = 1,
+                    modifier = Modifier.align(Alignment.CenterVertically)
                 )
             }
-        }
-
-        if (viewModel.shouldShowBoltInTextMode) {
-            BasicText(
-                text = "\u26A1",
-                color = colorProducer,
-                style = textStyle,
-                maxLines = 1,
-            )
         }
 
         if (showEstimate) {

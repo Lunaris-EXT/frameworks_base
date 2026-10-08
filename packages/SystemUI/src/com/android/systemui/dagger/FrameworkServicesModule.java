@@ -37,6 +37,7 @@ import android.app.WallpaperManager;
 import android.app.admin.DevicePolicyManager;
 import android.app.ambientcontext.AmbientContextManager;
 import android.app.job.JobScheduler;
+import android.app.people.IPeopleManager;
 import android.app.role.RoleManager;
 import android.app.smartspace.SmartspaceManager;
 import android.app.supervision.SupervisionManager;
@@ -71,6 +72,7 @@ import android.hardware.face.FaceManager;
 import android.hardware.fingerprint.FingerprintManager;
 import android.hardware.input.InputManager;
 import android.hardware.location.ContextHubManager;
+import android.hardware.usb.IUsbManager;
 import android.location.LocationManager;
 import android.media.AudioManager;
 import android.media.IAudioService;
@@ -103,6 +105,7 @@ import android.telephony.CarrierConfigManager;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.telephony.satellite.SatelliteManager;
+import android.uilatencystats.UiLatencyStatsManager;
 import android.view.CrossWindowBlurListeners;
 import android.view.IWindowManager;
 import android.view.LayoutInflater;
@@ -585,6 +588,12 @@ public class FrameworkServicesModule {
         return new UserScopedServiceImpl<>(context, UiModeManager.class);
     }
 
+    @Provides
+    @Singleton
+    static Optional<UiLatencyStatsManager> provideUiLatencyStatsManager(Context context) {
+        return Optional.ofNullable(context.getSystemService(UiLatencyStatsManager.class));
+    }
+
     /** */
     @Provides
     @Singleton
@@ -858,7 +867,14 @@ public class FrameworkServicesModule {
     @Provides
     @Singleton
     @Nullable
-    static AxSandboxManager provideAxSandboxManager(Context context) {
-        return context.getSystemService(AxSandboxManager.class);
+    static IUsbManager provideIUsbManager() {
+        return IUsbManager.Stub.asInterface(ServiceManager.getService(Context.USB_SERVICE));
+    }
+
+    @Provides
+    @Singleton
+    @Nullable
+    static IPeopleManager provideIPeopleManager() {
+        return IPeopleManager.Stub.asInterface(ServiceManager.getService(Context.PEOPLE_SERVICE));
     }
 }

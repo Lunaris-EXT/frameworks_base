@@ -623,6 +623,11 @@ public class ImageWallpaper extends WallpaperService {
         }
 
         @Override
+        public @Nullable WallpaperColors computeColorsWithDim(float dimAmount) {
+            return mColorExtractor.onComputeColorsWithDim(dimAmount);
+        }
+
+        @Override
         public boolean supportsLocalColorExtraction() {
             return true;
         }

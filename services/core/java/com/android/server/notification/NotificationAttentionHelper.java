@@ -30,10 +30,12 @@ import static android.media.audio.Flags.focusExclusiveWithRecording;
 import static android.service.notification.NotificationListenerService.HINT_HOST_DISABLE_CALL_EFFECTS;
 import static android.service.notification.NotificationListenerService.HINT_HOST_DISABLE_EFFECTS;
 import static android.service.notification.NotificationListenerService.HINT_HOST_DISABLE_NOTIFICATION_EFFECTS;
+import static com.android.server.notification.Flags.favoritesIncomingCallLights;
 
 import android.Manifest.permission;
 import android.annotation.IntDef;
 import android.app.ActivityManager;
+import android.app.ActivityTaskManager;
 import android.app.KeyguardManager;
 import android.app.Notification;
 import android.app.NotificationManager;
@@ -48,6 +50,7 @@ import android.content.pm.ShortcutInfo;
 import android.content.pm.UserInfo;
 import android.content.res.Resources;
 import android.database.ContentObserver;
+import android.graphics.Color;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.media.IRingtonePlayer;
@@ -158,6 +161,9 @@ public final class NotificationAttentionHelper {
     @Retention(RetentionPolicy.SOURCE)
     @interface MuteReason {}
 
+    static final int FAVORITE_CALL_LIGHT_SETTING_VELUE_ON = 1;
+    static final int FAVORITE_CALL_LIGHT_SETTING_VELUE_OFF = 0;
+
     private final Context mContext;
     //This is NMS.mNotificationLock.
     private final Object mLock;
@@ -171,14 +177,17 @@ public final class NotificationAttentionHelper {
     private AudioManager mAudioManager;
     private final NotificationUsageStats mUsageStats;
     private final ZenModeHelper mZenModeHelper;
+    private final ActivityTaskManager mActivityTaskManager;
 
     private VibratorHelper mVibratorHelper;
     private VibrationStatsWriter mVibrationStatsWriter;
     // The last key in this list owns the hardware.
     @GuardedBy("mLock")
     ArrayList<String> mLights = new ArrayList<>();
+
     private LogicalLight mNotificationLight;
     private LogicalLight mAttentionLight;
+    private LogicalLight mPriorityNotificationLight;
 
     private final boolean mUseAttentionLight;
     boolean mHasLight;
@@ -211,6 +220,9 @@ public final class NotificationAttentionHelper {
     private boolean mNotificationCooldownApplyToAll;
     private boolean mNotificationCooldownVibrateUnlocked;
 
+    private boolean mFavoritesIncomingCallLightsEnabled;
+    private boolean mFavoritesIncomingCallLightsForWorkEnabled;
+
     private final PolitenessStrategy mStrategy;
     private int mCurrentWorkProfileId = UserHandle.USER_NULL;
 
@@ -232,12 +244,17 @@ public final class NotificationAttentionHelper {
         mUsageStats = usageStats;
         mZenModeHelper = zenModeHelper;
         mFlagResolver = flagResolver;
+        mActivityTaskManager = context.getSystemService(ActivityTaskManager.class);
 
         mVibratorHelper = new VibratorHelper(context);
         mVibrationStatsWriter = vibrationStatsWriter;
 
         mNotificationLight = lightsManager.getLight(LightsManager.LIGHT_ID_NOTIFICATIONS);
         mAttentionLight = lightsManager.getLight(LightsManager.LIGHT_ID_ATTENTION);
+        if (favoritesIncomingCallLights()) {
+            mPriorityNotificationLight =
+                    lightsManager.getLight(LightsManager.LIGHT_ID_PRIORITY_NOTIFICATIONS);
+        }
 
         Resources resources = context.getResources();
         mUseAttentionLight = resources.getBoolean(R.bool.config_useAttentionLight);
@@ -273,7 +290,7 @@ public final class NotificationAttentionHelper {
 
         mZenModeHelper.addCallback(new ZenModeHelper.Callback() {
             @Override
-            void onZenModeChanged() {
+            public void onZenModeChanged() {
                 Binder.withCleanCallingIdentity(() -> {
                     mLineageNotificationLights.setZenMode(mZenModeHelper.getZenMode());
                 });
@@ -291,51 +308,31 @@ public final class NotificationAttentionHelper {
     }
 
     private PolitenessStrategy createPolitenessStrategy() {
-        if (Flags.crossAppPoliteNotifications()) {
-            PolitenessStrategy appStrategy = new StrategyPerApp(
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_COOLDOWN_T1),
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_COOLDOWN_T2),
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_VOLUME1),
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_VOLUME2),
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_COOLDOWN_COUNTER_RESET),
-                    record -> {
-                        final String category = record.getNotification().category;
-                        if (Notification.CATEGORY_ALARM.equals(category)
-                                || Notification.CATEGORY_CAR_EMERGENCY.equals(category)
-                                || Notification.CATEGORY_CAR_WARNING.equals(category)) {
-                            return true;
-                        }
-                        return mPackageManager.checkPermission(
-                            permission.RECEIVE_EMERGENCY_BROADCAST,
-                            record.getSbn().getPackageName()) == PERMISSION_GRANTED;
-                    });
+        PolitenessStrategy appStrategy = new StrategyPerApp(
+                mFlagResolver.getIntValue(NotificationFlags.NOTIF_COOLDOWN_T1),
+                mFlagResolver.getIntValue(NotificationFlags.NOTIF_COOLDOWN_T2),
+                mFlagResolver.getIntValue(NotificationFlags.NOTIF_VOLUME1),
+                mFlagResolver.getIntValue(NotificationFlags.NOTIF_VOLUME2),
+                mFlagResolver.getIntValue(NotificationFlags.NOTIF_COOLDOWN_COUNTER_RESET),
+                record -> {
+                    final String category = record.getNotification().category;
+                    if (Notification.CATEGORY_ALARM.equals(category)
+                            || Notification.CATEGORY_CAR_EMERGENCY.equals(category)
+                            || Notification.CATEGORY_CAR_WARNING.equals(category)) {
+                        return true;
+                    }
+                    return mPackageManager.checkPermission(
+                        permission.RECEIVE_EMERGENCY_BROADCAST,
+                        record.getSbn().getPackageName()) == PERMISSION_GRANTED;
+                });
 
-            return new StrategyAvalanche(
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_COOLDOWN_T1),
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_COOLDOWN_T2),
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_VOLUME1),
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_VOLUME2),
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_AVALANCHE_TIMEOUT),
-                    appStrategy, appStrategy.mExemptionProvider);
-        } else {
-            return new StrategyPerApp(
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_COOLDOWN_T1),
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_COOLDOWN_T2),
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_VOLUME1),
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_VOLUME2),
-                    mFlagResolver.getIntValue(NotificationFlags.NOTIF_COOLDOWN_COUNTER_RESET),
-                    record -> {
-                        final String category = record.getNotification().category;
-                        if (Notification.CATEGORY_ALARM.equals(category)
-                                || Notification.CATEGORY_CAR_EMERGENCY.equals(category)
-                                || Notification.CATEGORY_CAR_WARNING.equals(category)) {
-                            return true;
-                        }
-                        return mPackageManager.checkPermission(
-                            permission.RECEIVE_EMERGENCY_BROADCAST,
-                            record.getSbn().getPackageName()) == PERMISSION_GRANTED;
-                    });
-        }
+        return new StrategyAvalanche(
+                mFlagResolver.getIntValue(NotificationFlags.NOTIF_COOLDOWN_T1),
+                mFlagResolver.getIntValue(NotificationFlags.NOTIF_COOLDOWN_T2),
+                mFlagResolver.getIntValue(NotificationFlags.NOTIF_VOLUME1),
+                mFlagResolver.getIntValue(NotificationFlags.NOTIF_VOLUME2),
+                mFlagResolver.getIntValue(NotificationFlags.NOTIF_AVALANCHE_TIMEOUT),
+                appStrategy, appStrategy.mExemptionProvider);
     }
 
     @VisibleForTesting
@@ -377,20 +374,26 @@ public final class NotificationAttentionHelper {
         filter.addAction(Intent.ACTION_USER_REMOVED);
         filter.addAction(Intent.ACTION_USER_SWITCHED);
         filter.addAction(Intent.ACTION_USER_UNLOCKED);
-        if (Flags.crossAppPoliteNotifications()) {
-            for (String avalancheIntent : NOTIFICATION_AVALANCHE_TRIGGER_INTENTS) {
-                filter.addAction(avalancheIntent);
-            }
+        for (String avalancheIntent : NOTIFICATION_AVALANCHE_TRIGGER_INTENTS) {
+            filter.addAction(avalancheIntent);
         }
         mContext.registerReceiverAsUser(mIntentReceiver, UserHandle.ALL, filter, null, null);
 
         mContext.getContentResolver().registerContentObserver(
                 SettingsObserver.NOTIFICATION_LIGHT_PULSE_URI, false, mSettingsObserver,
                 UserHandle.USER_ALL);
-        mContext.getContentResolver().registerContentObserver(
-                SettingsObserver.NOTIFICATION_SOUND_VIB_SCREEN_ON_URI, false, mSettingsObserver,
-                UserHandle.USER_ALL);
+
+        if (favoritesIncomingCallLights()) {
+            mContext.getContentResolver()
+                    .registerContentObserver(
+                            SettingsObserver.LIGHT_ANIMATION_FAVORITE_CALLS_ENABLED_URI,
+                            false,
+                            mSettingsObserver,
+                            UserHandle.USER_ALL);
+        }
+
         if (Flags.politeNotifications()) {
+            mCurrentWorkProfileId = getManagedProfileId(ActivityManager.getCurrentUser());
             mContext.getContentResolver().registerContentObserver(
                     SettingsObserver.NOTIFICATION_COOLDOWN_ENABLED_URI, false, mSettingsObserver,
                     UserHandle.USER_ALL);
@@ -447,6 +450,50 @@ public final class NotificationAttentionHelper {
                 Log.e(TAG, "Failed to read Settings: " + e);
             }
         }
+
+        if (favoritesIncomingCallLights()) {
+            try {
+                if (mCurrentWorkProfileId == UserHandle.USER_NULL) {
+                    mCurrentWorkProfileId = getManagedProfileId(ActivityManager.getCurrentUser());
+                }
+
+                final boolean favoritesIncomingCallLightsEnabled =
+                        Settings.Secure.getIntForUser(
+                                        mContext.getContentResolver(),
+                                        Settings.Secure.LIGHT_ANIMATION_FAVORITE_CALLS_ENABLED,
+                                        FAVORITE_CALL_LIGHT_SETTING_VELUE_ON,
+                                        UserHandle.USER_CURRENT)
+                                != FAVORITE_CALL_LIGHT_SETTING_VELUE_OFF;
+                boolean favoritesIncomingCallLightsForWorkEnabled = false;
+
+                if (mCurrentWorkProfileId != UserHandle.USER_NULL) {
+                    favoritesIncomingCallLightsForWorkEnabled =
+                            Settings.Secure.getIntForUser(
+                                            mContext.getContentResolver(),
+                                            Settings.Secure.LIGHT_ANIMATION_FAVORITE_CALLS_ENABLED,
+                                            FAVORITE_CALL_LIGHT_SETTING_VELUE_ON,
+                                            mCurrentWorkProfileId)
+                                    != FAVORITE_CALL_LIGHT_SETTING_VELUE_OFF;
+                } else {
+                    favoritesIncomingCallLightsForWorkEnabled = false;
+                }
+                synchronized (mLock) {
+                    if (mFavoritesIncomingCallLightsEnabled != favoritesIncomingCallLightsEnabled
+                            || mFavoritesIncomingCallLightsForWorkEnabled
+                                    != favoritesIncomingCallLightsForWorkEnabled) {
+
+                        mFavoritesIncomingCallLightsEnabled = favoritesIncomingCallLightsEnabled;
+                        mFavoritesIncomingCallLightsForWorkEnabled =
+                                favoritesIncomingCallLightsForWorkEnabled;
+
+                        updateLightsLocked();
+                    }
+                }
+
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to read Settings: " + e);
+            }
+        }
     }
 
     @VisibleForTesting
@@ -490,8 +537,7 @@ public final class NotificationAttentionHelper {
                 && record.getImportance() > IMPORTANCE_MIN
                 && !suppressedByDnd
                 && isNotificationForCurrentUser(record, signals)) {
-            sendAccessibilityEvent(record);
-            sentAccessibilityEvent = true;
+            sentAccessibilityEvent = sendAccessibilityEvent(record);
         }
 
         if (aboveThreshold && isNotificationForCurrentUser(record, signals)) {
@@ -518,8 +564,7 @@ public final class NotificationAttentionHelper {
                 shouldMuteReason = shouldMuteNotificationLocked(record, signals, hasAudibleAlert);
                 if (shouldMuteReason == MUTE_REASON_NOT_MUTED) {
                     if (!sentAccessibilityEvent) {
-                        sendAccessibilityEvent(record);
-                        sentAccessibilityEvent = true;
+                        sentAccessibilityEvent = sendAccessibilityEvent(record);
                     }
                     if (DEBUG) Slog.v(TAG, "Interrupting!");
                     boolean isInsistentUpdate = isInsistentUpdate(record);
@@ -583,6 +628,9 @@ public final class NotificationAttentionHelper {
             updateLightsLocked();
             if (mUseAttentionLight && mAttentionLight != null) {
                 mAttentionLight.pulse();
+            }
+            if (favoritesIncomingCallLights() && isCallLight(record) && !wasShowLights) {
+                startPriorityNotificationLight();
             }
             blink = true;
         } else if (wasShowLights) {
@@ -990,11 +1038,46 @@ public final class NotificationAttentionHelper {
         clearLightsLocked();
     }
 
-    void updateLightsLocked() {
-        if (mNotificationLight == null) {
+    public void evaluateLateCallLightLocked(
+            final NotificationRecord record, final Signals signals) {
+        if (!favoritesIncomingCallLights()) return;
+
+        // Should this notification make noise, vibe, or use the LED?
+        final boolean aboveThreshold =
+                mIsAutomotive
+                        ? record.getImportance() > NotificationManager.IMPORTANCE_DEFAULT
+                        : record.getImportance() >= NotificationManager.IMPORTANCE_DEFAULT;
+
+
+        boolean canShowLights = canShowLightsLocked(record, signals, aboveThreshold);
+
+        // Remove the notification from the list, and add it on top if canShowLights is true
+        boolean wasShowLights = mLights.remove(record.getKey());
+
+        if (canShowLights && mPriorityNotificationLight != null) {
+            mLights.add(record.getKey());
+        }
+
+        if (!canShowLights || mPriorityNotificationLight == null) {
+            if (wasShowLights) {
+                updateLightsLocked();
+            }
             return;
         }
 
+        boolean isCallLight = isCallLight(record);
+
+
+        if (isCallLight) {
+            if (!wasShowLights) {
+                startPriorityNotificationLight();
+            }
+        } else if (wasShowLights) {
+            updateLightsLocked();
+        }
+    }
+
+    void updateLightsLocked() {
         // handle notification lights
         NotificationRecord ledNotification = null;
         while (ledNotification == null && !mLights.isEmpty()) {
@@ -1004,6 +1087,18 @@ public final class NotificationAttentionHelper {
                 Slog.wtfStack(TAG, "LED Notification does not exist: " + owner);
                 mLights.remove(owner);
             }
+        }
+
+        if (favoritesIncomingCallLights()) {
+            if (!isCallLight(ledNotification) || mUserPresent || isInCall()) {
+                if (!mLineageNotificationLights.showLightsScreenOn()) {
+                    stopPriorityNotificationLight();
+                }
+            }
+        }
+
+        if (mNotificationLight == null) {
+            return;
         }
 
         NotificationRecord.Light light = ledNotification != null ?
@@ -1041,6 +1136,33 @@ public final class NotificationAttentionHelper {
         }
     }
 
+    private void stopNotificationLight() {
+        if (mNotificationLight != null) mNotificationLight.turnOff();
+    }
+
+    private void startPriorityNotificationLight() {
+        if (mPriorityNotificationLight != null) {
+            mPriorityNotificationLight.setFlashing(
+                    Color.WHITE, LogicalLight.LIGHT_FLASH_TIMED, 500, 2000);
+            if (DEBUG) {
+                Slog.d(TAG, "START. startPriorityNotificationLight");
+            }
+        }
+    }
+
+    private void stopPriorityNotificationLight() {
+        if (mPriorityNotificationLight != null) {
+            mPriorityNotificationLight.turnOff();
+            if (DEBUG) {
+                Slog.d(TAG, "STOP.  stopPriorityNotificationLight");
+            }
+        }
+    }
+
+    private boolean isLedForcedOn(NotificationRecord nr) {
+        return nr != null && mLineageNotificationLights.isForcedOn(nr.getSbn().getNotification());
+    }
+
     private boolean isLedForcedOn(NotificationRecord nr) {
         return nr != null && mLineageNotificationLights.isForcedOn(nr.getSbn().getNotification());
     }
@@ -1050,8 +1172,13 @@ public final class NotificationAttentionHelper {
         if (!mSystemReady) {
             return false;
         }
+
+        if (mUserPresent) {
+            return false;
+        }
+
         // device lacks light
-        if (!mHasLight) {
+        if (!mHasLight && mPriorityNotificationLight == null) {
             return false;
         }
         // Forced on
@@ -1065,7 +1192,8 @@ public final class NotificationAttentionHelper {
             return false;
         }
         // the notification/channel has no light
-        if (record.getLight() == null) {
+        // TODO (b/491071211): Investigate why light is sometimes null.
+        if (record.getLight() == null && !isCallLight(record)) {
             return false;
         }
         // unimportant notification
@@ -1087,6 +1215,26 @@ public final class NotificationAttentionHelper {
         }
         // Light, but only when the screen is off
         return true;
+    }
+
+   private boolean isCallLight(NotificationRecord record) {
+        if (!favoritesIncomingCallLights() || mPriorityNotificationLight == null) return false;
+
+        if (record == null
+                || !record.isRealCallIncomingNotification()
+                || record.getNotification() == null) {
+            return false;
+        }
+
+
+        boolean isFavoriteCall =
+                record.getContactAffinity() >= ValidateNotificationPeople.STARRED_CONTACT;
+        boolean isFavoritesIncomingCallLightsEnabled =
+                isNotificationForWorkProfile(record)
+                        ? mFavoritesIncomingCallLightsForWorkEnabled
+                        : mFavoritesIncomingCallLightsEnabled;
+
+        return isFavoriteCall && isFavoritesIncomingCallLightsEnabled;
     }
 
     private String disableNotificationEffects(NotificationRecord record, int listenerHints) {
@@ -1178,9 +1326,11 @@ public final class NotificationAttentionHelper {
         return UserHandle.USER_NULL;
     }
 
-    void sendAccessibilityEvent(NotificationRecord record) {
-        if (!mAccessibilityManager.isEnabled() || !mEnableNotificationAccessibilityEvents) {
-            return;
+    boolean sendAccessibilityEvent(NotificationRecord record) {
+        if (!mAccessibilityManager.isEnabled() || !mEnableNotificationAccessibilityEvents
+                || (mActivityTaskManager != null && mActivityTaskManager.isInLockTaskMode())
+                || mDisableNotificationEffects) {
+            return false;
         }
 
         final Notification notification = record.getNotification();
@@ -1207,6 +1357,7 @@ public final class NotificationAttentionHelper {
         }
 
         mAccessibilityManager.sendAccessibilityEvent(event);
+        return true;
     }
 
     /**
@@ -1479,12 +1630,7 @@ public final class NotificationAttentionHelper {
 
             final String key = getChannelKey(record);
             @PolitenessState final int currState = getPolitenessState(record);
-            @PolitenessState int nextState;
-            if (Flags.politeNotificationsAttnUpdate()) {
-                nextState = getNextState(currState, timeSinceLastNotif, record);
-            } else {
-                nextState = getNextState(currState, timeSinceLastNotif);
-            }
+            @PolitenessState int nextState = getNextState(currState, timeSinceLastNotif, record);
 
             // Reset to default state if number of posted notifications exceed this value when muted
             int numPosted = mNumPosted.getOrDefault(key, 0) + 1;
@@ -1551,12 +1697,8 @@ public final class NotificationAttentionHelper {
 
                 final String key = getChannelKey(record);
                 @PolitenessState final int currState = getPolitenessState(record);
-                @PolitenessState int nextState;
-                if (Flags.politeNotificationsAttnUpdate()) {
-                    nextState = getNextState(currState, timeSinceLastNotif, record);
-                } else {
-                    nextState = getNextState(currState, timeSinceLastNotif);
-                }
+                @PolitenessState int nextState = getNextState(currState, timeSinceLastNotif,
+                        record);
 
                 if (DEBUG) {
                     Log.i(TAG,
@@ -1609,23 +1751,12 @@ public final class NotificationAttentionHelper {
         @Override
         String getChannelKey(final NotificationRecord record) {
             if (isAvalancheActive()) {
-                if (Flags.politeNotificationsAttnUpdate()) {
-                    // Treat high importance conversations independently
-                    if (isAvalancheExempted(record)) {
-                        return super.getChannelKey(record);
-                    } else {
-                        // Use one global key per user
-                        return record.getSbn().getNormalizedUserId() + ":" + COMMON_KEY;
-                    }
+                // Treat high importance conversations independently
+                if (isAvalancheExempted(record)) {
+                    return super.getChannelKey(record);
                 } else {
-                    // If the user explicitly changed the channel notification sound:
-                    // handle as a separate channel
-                    if (record.getChannel().hasUserSetSound()) {
-                        return super.getChannelKey(record);
-                    } else {
-                        // Use one global key per user
-                        return record.getSbn().getNormalizedUserId() + ":" + COMMON_KEY;
-                    }
+                    // Use one global key per user
+                    return record.getSbn().getNormalizedUserId() + ":" + COMMON_KEY;
                 }
             } else {
                 return mAppStrategy.getChannelKey(record);
@@ -1635,12 +1766,8 @@ public final class NotificationAttentionHelper {
         @Override
         public void setLastNotificationUpdateTimeMs(NotificationRecord record,
                 long timestampMillis) {
-            if (Flags.politeNotificationsAttnUpdate()) {
-                // Set last update per package/channel only for exempt notifications
-                if (isAvalancheExempted(record)) {
-                    super.setLastNotificationUpdateTimeMs(record, timestampMillis);
-                }
-            } else {
+            // Set last update per package/channel only for exempt notifications
+            if (isAvalancheExempted(record)) {
                 super.setLastNotificationUpdateTimeMs(record, timestampMillis);
             }
             mLastNotificationTimestamp = timestampMillis;
@@ -1648,19 +1775,11 @@ public final class NotificationAttentionHelper {
         }
 
         long getLastNotificationUpdateTimeMs(final NotificationRecord record) {
-            if (Flags.politeNotificationsAttnUpdate()) {
-                // Mute all except priority conversations
-                if (isAvalancheExempted(record)) {
-                    return super.getLastNotificationUpdateTimeMs(record);
-                } else {
-                    return mLastNotificationTimestamp;
-                }
+            // Mute all except priority conversations
+            if (isAvalancheExempted(record)) {
+                return super.getLastNotificationUpdateTimeMs(record);
             } else {
-                if (record.getChannel().hasUserSetSound()) {
-                    return super.getLastNotificationUpdateTimeMs(record);
-                } else {
-                    return mLastNotificationTimestamp;
-                }
+                return mLastNotificationTimestamp;
             }
         }
 
@@ -1778,11 +1897,9 @@ public final class NotificationAttentionHelper {
             } else if (action.equals(Intent.ACTION_USER_PRESENT)) {
                 mUserPresent = true;
                 // turn off LED when user passes through lock screen
-                if (mNotificationLight != null) {
-                    // if lights with screen on is disabled.
-                    if (!mLineageNotificationLights.showLightsScreenOn()) {
-                        mNotificationLight.turnOff();
-                    }
+                if (!mLineageNotificationLights.showLightsScreenOn()) {
+                    stopNotificationLight();
+                    stopPriorityNotificationLight();
                 }
             } else if (action.equals(Intent.ACTION_USER_ADDED)
                         || action.equals(Intent.ACTION_USER_REMOVED)
@@ -1791,27 +1908,25 @@ public final class NotificationAttentionHelper {
                 loadUserSettings();
             }
 
-            if (Flags.crossAppPoliteNotifications()) {
-                if (NOTIFICATION_AVALANCHE_TRIGGER_INTENTS.contains(action)) {
-                    boolean enableAvalancheStrategy = true;
-                    // Some actions must also match extras, ie. airplane mode => disabled
-                    Pair<String, Boolean> expectedExtras =
-                            NOTIFICATION_AVALANCHE_TRIGGER_EXTRAS.get(action);
-                    if (expectedExtras != null) {
-                        enableAvalancheStrategy =
-                                intent.getBooleanExtra(expectedExtras.first, false)
-                                == expectedExtras.second;
-                    }
+            if (NOTIFICATION_AVALANCHE_TRIGGER_INTENTS.contains(action)) {
+                boolean enableAvalancheStrategy = true;
+                // Some actions must also match extras, ie. airplane mode => disabled
+                Pair<String, Boolean> expectedExtras =
+                        NOTIFICATION_AVALANCHE_TRIGGER_EXTRAS.get(action);
+                if (expectedExtras != null) {
+                    enableAvalancheStrategy =
+                            intent.getBooleanExtra(expectedExtras.first, false)
+                            == expectedExtras.second;
+                }
 
-                    if (DEBUG) {
-                        Log.i(TAG, "Avalanche trigger intent received: " + action
-                                + ". Enabling avalanche strategy: " + enableAvalancheStrategy);
-                    }
+                if (DEBUG) {
+                    Log.i(TAG, "Avalanche trigger intent received: " + action
+                            + ". Enabling avalanche strategy: " + enableAvalancheStrategy);
+                }
 
-                    if (enableAvalancheStrategy && mStrategy instanceof StrategyAvalanche) {
-                        ((StrategyAvalanche) mStrategy)
-                                .setTriggerTimeMs(System.currentTimeMillis());
-                    }
+                if (enableAvalancheStrategy && mStrategy instanceof StrategyAvalanche) {
+                    ((StrategyAvalanche) mStrategy)
+                            .setTriggerTimeMs(System.currentTimeMillis());
                 }
             }
         }
@@ -1821,6 +1936,8 @@ public final class NotificationAttentionHelper {
 
         private static final Uri NOTIFICATION_LIGHT_PULSE_URI = Settings.System.getUriFor(
                 Settings.System.NOTIFICATION_LIGHT_PULSE);
+        private static final Uri LIGHT_ANIMATION_FAVORITE_CALLS_ENABLED_URI =
+                Settings.Secure.getUriFor(Settings.Secure.LIGHT_ANIMATION_FAVORITE_CALLS_ENABLED);
         private static final Uri NOTIFICATION_COOLDOWN_ENABLED_URI = Settings.System.getUriFor(
                 Settings.System.NOTIFICATION_COOLDOWN_ENABLED);
         private static final Uri NOTIFICATION_COOLDOWN_ALL_URI = Settings.System.getUriFor(
@@ -1848,11 +1965,31 @@ public final class NotificationAttentionHelper {
                     }
                 }
             }
-            if (uri == null || NOTIFICATION_SOUND_VIB_SCREEN_ON_URI.equals(uri)) {
-                mSoundVibScreenOn = Settings.System.getIntForUser(
-                        mContext.getContentResolver(),
-                        Settings.System.NOTIFICATION_SOUND_VIB_SCREEN_ON, 1,
-                        UserHandle.USER_CURRENT) == 1;
+            if (favoritesIncomingCallLights()
+                    && LIGHT_ANIMATION_FAVORITE_CALLS_ENABLED_URI.equals(uri)) {
+                mFavoritesIncomingCallLightsEnabled =
+                        Settings.Secure.getIntForUser(
+                                        mContext.getContentResolver(),
+                                        Settings.Secure.LIGHT_ANIMATION_FAVORITE_CALLS_ENABLED,
+                                        1,
+                                        UserHandle.USER_CURRENT)
+                                != 0;
+
+                if (mCurrentWorkProfileId != UserHandle.USER_NULL) {
+                    mFavoritesIncomingCallLightsForWorkEnabled =
+                            Settings.Secure.getIntForUser(
+                                            mContext.getContentResolver(),
+                                            Settings.Secure.LIGHT_ANIMATION_FAVORITE_CALLS_ENABLED,
+                                            1,
+                                            mCurrentWorkProfileId)
+                                    != 0;
+                } else {
+                    mFavoritesIncomingCallLightsForWorkEnabled = false;
+                }
+
+                synchronized (mLock) {
+                    updateLightsLocked();
+                }
             }
             if (Flags.politeNotifications()) {
                 if (uri == null || NOTIFICATION_COOLDOWN_ENABLED_URI.equals(uri)) {
@@ -1948,6 +2085,14 @@ public final class NotificationAttentionHelper {
     void setLights(LogicalLight light) {
         mNotificationLight = light;
         mAttentionLight = light;
+        if (favoritesIncomingCallLights()) {
+            mPriorityNotificationLight = light;
+        }
+    }
+
+    @VisibleForTesting
+    void setPriorityNotificationLight(LogicalLight priorityNotificationLight) {
+        mPriorityNotificationLight = priorityNotificationLight;
     }
 
     @VisibleForTesting

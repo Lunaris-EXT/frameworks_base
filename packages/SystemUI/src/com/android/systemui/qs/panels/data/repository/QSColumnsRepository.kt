@@ -30,12 +30,10 @@ import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.res.R
 import com.android.systemui.shade.ShadeDisplayAware
 import com.android.systemui.util.kotlin.emitOnStart
+import com.android.systemui.util.kotlin.mapDirect
 import javax.inject.Inject
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.flow.mapLatest
-import kotlinx.coroutines.flow.merge
 
 @SysUISingleton
 class QSColumnsRepository
@@ -45,15 +43,13 @@ constructor(
     @ShadeDisplayAware private val resources: Resources,
     @ShadeDisplayAware private val configurationRepository: ConfigurationRepository,
 ) {
-    private fun settingsChanges(): Flow<Unit> = callbackFlow {
-        val uris: List<Uri> = listOf(
-            Settings.System.getUriFor(Settings.System.QS_TILES_COLUMNS),
-            Settings.System.getUriFor(Settings.System.QS_TILES_COLUMNS_LANDSCAPE)
-        )
-        val observer = object : ContentObserver(null) {
-            override fun onChange(selfChange: Boolean, uri: Uri?) {
-                trySend(Unit)
-            }
+    val splitShadeColumns: Flow<Int> =
+        configurationRepository.onConfigurationChange.emitOnStart().mapDirect {
+            resources.getInteger(R.integer.quick_settings_split_shade_num_columns)
+        }
+    val dualShadeColumns: Flow<Int> =
+        configurationRepository.onConfigurationChange.emitOnStart().mapDirect {
+            resources.getInteger(R.integer.quick_settings_dual_shade_num_columns)
         }
         val cr = context.contentResolver
         uris.forEach { cr.registerContentObserver(it, /*notifyForDescendants*/ false, observer, UserHandle.USER_ALL) }
@@ -76,14 +72,9 @@ constructor(
             .mapLatest { readColumnsWithDefault(defaultResId) }
 
     val columns: Flow<Int> =
-        reactiveColumns(R.integer.quick_settings_infinite_grid_num_columns)
-
-    val splitShadeColumns: Flow<Int> =
-        reactiveColumns(R.integer.quick_settings_split_shade_num_columns)
-
-    val dualShadeColumns: Flow<Int> =
-        reactiveColumns(R.integer.quick_settings_dual_shade_num_columns)
-
+        configurationRepository.onConfigurationChange.emitOnStart().mapDirect {
+            resources.getInteger(R.integer.quick_settings_infinite_grid_num_columns)
+        }
     val defaultColumns: Int =
         resources.getInteger(R.integer.quick_settings_infinite_grid_num_columns)
     val defaultSplitShadeColumns: Int =

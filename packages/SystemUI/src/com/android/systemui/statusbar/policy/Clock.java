@@ -17,7 +17,6 @@
 package com.android.systemui.statusbar.policy;
 
 import android.annotation.NonNull;
-import android.app.StatusBarManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -25,6 +24,7 @@ import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.content.res.TypedArray;
+import android.database.ContentObserver;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.icu.lang.UCharacter;
@@ -48,7 +48,6 @@ import android.text.style.RelativeSizeSpan;
 import android.util.AttributeSet;
 import android.view.ContextThemeWrapper;
 import android.view.Display;
-import android.view.View;
 import android.widget.TextView;
 
 import com.android.settingslib.Utils;
@@ -61,9 +60,7 @@ import com.android.systemui.plugins.DarkIconDispatcher;
 import com.android.systemui.plugins.DarkIconDispatcher.DarkReceiver;
 import com.android.systemui.res.R;
 import com.android.systemui.settings.UserTracker;
-import com.android.systemui.shade.shared.flag.ShadeWindowGoesAround;
-import com.android.systemui.statusbar.CommandQueue;
-import com.android.systemui.statusbar.core.StatusBarRootModernization;
+import com.android.systemui.statusbar.phone.ui.StatusBarIconController;
 import com.android.systemui.tuner.TunerService;
 import com.android.systemui.tuner.TunerService.Tunable;
 
@@ -82,13 +79,10 @@ import java.util.TimeZone;
 public class Clock extends TextView implements
         DemoModeCommandReceiver,
         Tunable,
-        CommandQueue.Callbacks,
         DarkReceiver {
 
     private static final String CLOCK_SUPER_PARCELABLE = "clock_super_parcelable";
     private static final String CURRENT_USER_ID = "current_user_id";
-    private static final String VISIBLE_BY_POLICY = "visible_by_policy";
-    private static final String VISIBLE_BY_USER = "visible_by_user";
     private static final String SHOW_SECONDS = "show_seconds";
     private static final String VISIBILITY = "visibility";
 
@@ -110,11 +104,7 @@ public class Clock extends TextView implements
             "system:" + Settings.System.STATUS_BAR_CLOCK_BOLD;
 
     private final UserTracker mUserTracker;
-    private final CommandQueue mCommandQueue;
     private int mCurrentUserId;
-
-    private boolean mClockVisibleByPolicy = true;
-    private boolean mClockVisibleByUser = true;
 
     private boolean mAttached;
     private boolean mScreenReceiverRegistered;
@@ -129,19 +119,9 @@ public class Clock extends TextView implements
     private static final int AM_PM_STYLE_SMALL   = 1;
     private static final int AM_PM_STYLE_GONE    = 2;
 
-    private static final int CLOCK_DATE_DISPLAY_GONE = 0;
-    private static final int CLOCK_DATE_DISPLAY_SMALL = 1;
-    private static final int CLOCK_DATE_DISPLAY_NORMAL = 2;
-
-    private static final int CLOCK_DATE_STYLE_REGULAR = 0;
-    private static final int CLOCK_DATE_STYLE_LOWERCASE = 1;
-    private static final int CLOCK_DATE_STYLE_UPPERCASE = 2;
-
-    private static final int STYLE_DATE_LEFT = 0;
-    private static final int STYLE_DATE_RIGHT = 1;
-
     private int mAmPmStyle = AM_PM_STYLE_GONE;
     private boolean mShowSeconds;
+    private ContentObserver mContentObserver;
     private Handler mSecondsHandler;
     private int mClockDateDisplay = CLOCK_DATE_DISPLAY_GONE;
     private int mClockDateStyle = CLOCK_DATE_STYLE_REGULAR;
@@ -159,6 +139,9 @@ public class Clock extends TextView implements
 
     // Tracks config changes that will make the clock change dimensions
     private final InterestingConfigChanges mInterestingConfigChanges;
+
+    private boolean mShouldApplyPadding = true;
+
     /**
      * Color to be set on this {@link TextView}, when wallpaperTextColor is <b>not</b> utilized.
      */
@@ -181,28 +164,32 @@ public class Clock extends TextView implements
 
     public Clock(Context context, AttributeSet attrs, int defStyle) {
         super(context, attrs, defStyle);
-        mCommandQueue = Dependency.get(CommandQueue.class);
         TypedArray a = context.getTheme().obtainStyledAttributes(
                 attrs,
                 R.styleable.Clock,
                 0, 0);
         try {
-            mAmPmStyle = LineageSettings.System.getIntForUser(
-                context.getContentResolver(), LineageSettings.System.STATUS_BAR_AM_PM,
-                AM_PM_STYLE_GONE, UserHandle.USER_CURRENT);
-            mIsStatusBar = a.getBoolean(R.styleable.Clock_isStatusBar, mIsStatusBar);
+            mAmPmStyle = readClockAmPm(context);
+            mContentObserver = new ContentObserver(null) {
+                @Override
+                public void onChange(boolean selfChange) {
+                    mAmPmStyle = readClockAmPm(context);
+                    // Force refresh of dependent variables.
+                    mContentDescriptionFormatString = "";
+                    mDateTimePatternGenerator = null;
+                    context.getMainExecutor().execute(() -> {
+                        updateClock(true);
+                    });
+                }
+            };
             mNonAdaptedColor = getCurrentTextColor();
         } finally {
             a.recycle();
         }
         mBroadcastDispatcher = Dependency.get(BroadcastDispatcher.class);
         mUserTracker = Dependency.get(UserTracker.class);
-        if (ShadeWindowGoesAround.isEnabled()) {
-            mInterestingConfigChanges = new InterestingConfigChanges(
-                    ActivityInfo.CONFIG_FONT_SCALE | ActivityInfo.CONFIG_DENSITY);
-        } else {
-            mInterestingConfigChanges = null;
-        }
+        mInterestingConfigChanges = new InterestingConfigChanges(
+                ActivityInfo.CONFIG_FONT_SCALE | ActivityInfo.CONFIG_DENSITY);
 
         setIncludeFontPadding(false);
     }
@@ -212,8 +199,6 @@ public class Clock extends TextView implements
         Bundle bundle = new Bundle();
         bundle.putParcelable(CLOCK_SUPER_PARCELABLE, super.onSaveInstanceState());
         bundle.putInt(CURRENT_USER_ID, mCurrentUserId);
-        bundle.putBoolean(VISIBLE_BY_POLICY, mClockVisibleByPolicy);
-        bundle.putBoolean(VISIBLE_BY_USER, mClockVisibleByUser);
         bundle.putBoolean(SHOW_SECONDS, mShowSeconds);
         bundle.putInt(VISIBILITY, getVisibility());
 
@@ -222,19 +207,16 @@ public class Clock extends TextView implements
 
     @Override
     public void onRestoreInstanceState(Parcelable state) {
-        if (state == null || !(state instanceof Bundle)) {
+        if (!(state instanceof Bundle bundle)) {
             super.onRestoreInstanceState(state);
             return;
         }
 
-        Bundle bundle = (Bundle) state;
         Parcelable superState = bundle.getParcelable(CLOCK_SUPER_PARCELABLE);
         super.onRestoreInstanceState(superState);
         if (bundle.containsKey(CURRENT_USER_ID)) {
             mCurrentUserId = bundle.getInt(CURRENT_USER_ID);
         }
-        mClockVisibleByPolicy = bundle.getBoolean(VISIBLE_BY_POLICY, true);
-        mClockVisibleByUser = bundle.getBoolean(VISIBLE_BY_USER, true);
         mShowSeconds = bundle.getBoolean(SHOW_SECONDS, false);
         if (bundle.containsKey(VISIBILITY)) {
             super.setVisibility(bundle.getInt(VISIBILITY));
@@ -259,16 +241,11 @@ public class Clock extends TextView implements
             // The receiver will return immediately if the view does not have a Handler yet.
             mBroadcastDispatcher.registerReceiverWithHandler(mIntentReceiver, filter,
                     Dependency.get(Dependency.TIME_TICK_HANDLER), UserHandle.ALL);
-            Dependency.get(TunerService.class).addTunable(this,
-                    STATUS_BAR_CLOCK_SECONDS,
-                    STATUS_BAR_AM_PM,
-                    STATUS_BAR_CLOCK_DATE_DISPLAY,
-                    STATUS_BAR_CLOCK_DATE_STYLE,
-                    STATUS_BAR_CLOCK_DATE_POSITION,
-                    STATUS_BAR_CLOCK_DATE_FORMAT,
-                    STATUS_BAR_CLOCK_PERIOD_SEPARATOR,
-                    STATUS_BAR_CLOCK_BOLD);
-            mCommandQueue.addCallback(this);
+            Dependency.get(TunerService.class).addTunable(this, CLOCK_SECONDS,
+                    StatusBarIconController.ICON_HIDE_LIST);
+            mContext.getContentResolver().registerContentObserver(
+                    LineageSettings.System.getUriFor(LineageSettings.System.STATUS_BAR_AM_PM),
+                    false, mContentObserver);
             mUserTracker.addCallback(mUserChangedCallback, mContext.getMainExecutor());
             mCurrentUserId = mUserTracker.getUserId();
         }
@@ -280,9 +257,6 @@ public class Clock extends TextView implements
 
         // Make sure we update to the current time
         updateClock();
-        if (!StatusBarRootModernization.isEnabled()) {
-            updateClockVisibility();
-        }
         updateShowSeconds();
         applyBoldClockStyle();
     }
@@ -301,8 +275,8 @@ public class Clock extends TextView implements
         if (mAttached) {
             mBroadcastDispatcher.unregisterReceiver(mIntentReceiver);
             mAttached = false;
+            mContext.getContentResolver().unregisterContentObserver(mContentObserver);
             Dependency.get(TunerService.class).removeTunable(this);
-            mCommandQueue.removeCallback(this);
             mUserTracker.removeCallback(mUserChangedCallback);
         }
     }
@@ -344,43 +318,6 @@ public class Clock extends TextView implements
         }
     };
 
-    @Override
-    public void setVisibility(int visibility) {
-        if (!StatusBarRootModernization.isEnabled()) {
-            if (visibility == View.VISIBLE && !shouldBeVisible()) {
-                return;
-            }
-        }
-
-        super.setVisibility(visibility);
-    }
-
-    private void setClockVisibleByUser(boolean visible) {
-        StatusBarRootModernization.assertInLegacyMode();
-
-        mClockVisibleByUser = visible;
-        updateClockVisibility();
-    }
-
-    private void setClockVisibilityByPolicy(boolean visible) {
-        StatusBarRootModernization.assertInLegacyMode();
-
-        mClockVisibleByPolicy = visible;
-        updateClockVisibility();
-    }
-
-    private boolean shouldBeVisible() {
-        return mClockVisibleByPolicy && mClockVisibleByUser;
-    }
-
-    private void updateClockVisibility() {
-        StatusBarRootModernization.assertInLegacyMode();
-
-        boolean visible = shouldBeVisible();
-        int visibility = visible ? View.VISIBLE : View.GONE;
-        super.setVisibility(visibility);
-    }
-
     final void updateClock(boolean forceTextUpdate) {
         if (mDemoMode || mCalendar == null) return;
         mCalendar.setTimeInMillis(System.currentTimeMillis());
@@ -400,76 +337,9 @@ public class Clock extends TextView implements
 
     @Override
     public void onTuningChanged(String key, String newValue) {
-        switch (key) {
-            case STATUS_BAR_CLOCK_SECONDS:
-                mShowSeconds =
-                        TunerService.parseIntegerSwitch(newValue, false);
-                updateShowSeconds();
-                break;
-            case STATUS_BAR_AM_PM:
-                mAmPmStyle =
-                        TunerService.parseInteger(newValue, AM_PM_STYLE_GONE);
-                break;
-            case STATUS_BAR_CLOCK_DATE_DISPLAY:
-                mClockDateDisplay =
-                        TunerService.parseInteger(newValue, CLOCK_DATE_DISPLAY_GONE);
-                break;
-            case STATUS_BAR_CLOCK_DATE_STYLE:
-                mClockDateStyle =
-                        TunerService.parseInteger(newValue, CLOCK_DATE_STYLE_REGULAR);
-                break;
-            case STATUS_BAR_CLOCK_DATE_POSITION:
-                mClockDatePosition =
-                        TunerService.parseInteger(newValue, STYLE_DATE_LEFT);
-                break;
-            case STATUS_BAR_CLOCK_DATE_FORMAT:
-                mClockDateFormat = newValue;
-                break;
-            case STATUS_BAR_CLOCK_PERIOD_SEPARATOR:
-                mPeriodHourMinuteSeparator =
-                        TunerService.parseIntegerSwitch(newValue, false);
-                break;
-            case STATUS_BAR_CLOCK_BOLD:
-                mBoldStatusBarClock =
-                        TunerService.parseIntegerSwitch(newValue, false);
-                applyBoldClockStyle();
-                break;
-            default:
-                break;
-        }
-        // Force refresh of dependent variables.
-        mContentDescriptionFormatString = "";
-        mDateTimePatternGenerator = null;
-        updateClock(true);
-    }
-
-    private void applyBoldClockStyle() {
-        if (!mIsStatusBar) {
-            return;
-        }
-        Typeface tf = getTypeface();
-        if (tf == null) {
-            tf = Typeface.DEFAULT;
-        }
-        final int base = tf.getStyle() & ~Typeface.BOLD;
-        final int target = mBoldStatusBarClock ? (base | Typeface.BOLD) : base;
-        if (tf.getStyle() != target) {
-            setTypeface(Typeface.create(tf, target));
-        }
-    }
-
-    @Override
-    public void disable(int displayId, int state1, int state2, boolean animate) {
-        if (StatusBarRootModernization.isEnabled()) {
-            return;
-        }
-
-        if (displayId != getDisplay().getDisplayId()) {
-            return;
-        }
-        boolean clockVisibleByPolicy = (state1 & StatusBarManager.DISABLE_CLOCK) == 0;
-        if (clockVisibleByPolicy != mClockVisibleByPolicy) {
-            setClockVisibilityByPolicy(clockVisibleByPolicy);
+        if (CLOCK_SECONDS.equals(key)) {
+            mShowSeconds = TunerService.parseIntegerSwitch(newValue, false);
+            updateShowSeconds();
         }
     }
 
@@ -534,38 +404,50 @@ public class Clock extends TextView implements
     }
 
     public void onDensityOrFontScaleChanged() {
-        ShadeWindowGoesAround.assertInLegacyMode();
         // Note that this class is not being registered as configuration listener when used
         // from compose. It will instead receive a normal "View#onConfigurationChanged".
         reloadDimens();
     }
 
+    /**
+     * Sets whether the clock should automatically apply padding from resources when configuration
+     * changes. True by default.
+     */
+    public void setShouldApplyPadding(boolean shouldApply) {
+        mShouldApplyPadding = shouldApply;
+    }
+
     private void reloadDimens() {
         FontSizeUtils.updateFontSize(this, R.dimen.status_bar_clock_size);
 
-        // Note: The padding for the clock in the shade is controlled by ShadeHeaderController so
-        // this just affects the status bar clock.
-        setPaddingRelative(
-                mContext.getResources().getDimensionPixelSize(
-                        R.dimen.status_bar_clock_starting_padding),
-                0,
-                mContext.getResources().getDimensionPixelSize(
-                        R.dimen.status_bar_clock_end_padding),
-                0);
-        applyBoldClockStyle();
+        if (mShouldApplyPadding) {
+            // Note: The padding for the clock in the shade is controlled by ShadeHeaderController
+            // so this just affects the status bar clock.
+            setPaddingRelative(
+                    mContext.getResources().getDimensionPixelSize(
+                            R.dimen.status_bar_clock_starting_padding),
+                    0,
+                    mContext.getResources().getDimensionPixelSize(
+                            R.dimen.status_bar_clock_end_padding),
+                    0);
+        }
     }
 
 
     @Override
     protected void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        if (ShadeWindowGoesAround.isEnabled()) {
-            final boolean shouldReloadDimensions =
-                    mInterestingConfigChanges.applyNewConfig(newConfig);
-            if (shouldReloadDimensions) {
-                reloadDimens();
-            }
+        final boolean shouldReloadDimensions =
+                mInterestingConfigChanges.applyNewConfig(newConfig);
+        if (shouldReloadDimensions) {
+            reloadDimens();
         }
+    }
+
+    private int readClockAmPm(Context context) {
+        return LineageSettings.System.getIntForUser(
+                context.getContentResolver(), LineageSettings.System.STATUS_BAR_AM_PM,
+                AM_PM_STYLE_GONE, UserHandle.USER_CURRENT);
     }
 
     private void updateShowSeconds() {
@@ -595,7 +477,7 @@ public class Clock extends TextView implements
         }
     }
 
-    private final CharSequence getSmallTime() {
+    private CharSequence getSmallTime() {
         Context context = getContext();
         boolean is24 = DateFormat.is24HourFormat(context, mCurrentUserId);
         if (mDateTimePatternGenerator == null) {

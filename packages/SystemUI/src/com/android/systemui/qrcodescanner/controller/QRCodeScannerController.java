@@ -18,6 +18,8 @@ package com.android.systemui.qrcodescanner.controller;
 
 import static android.provider.Settings.Secure.LOCK_SCREEN_SHOW_QR_CODE_SCANNER;
 
+import static com.android.systemui.Flags.qrCodeScannerIntentAction;
+
 import android.annotation.IntDef;
 import android.content.ComponentName;
 import android.content.Context;
@@ -29,6 +31,7 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import android.provider.DeviceConfig;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.internal.config.sysui.SystemUiDeviceConfigFlags;
@@ -273,30 +276,24 @@ public class QRCodeScannerController implements
             com.android.internal.R.string.config_defaultQrCodeComponent);
     }
 
-    private Intent getLensIntent() {
-        Intent intent = new Intent();
-        Bundle bundle = new Bundle();
-
-        bundle.putString("caller_package", GSA_PACKAGE);
-        bundle.putLong("start_activity_time_nanos", SystemClock.elapsedRealtimeNanos());
-        intent.setComponent(new ComponentName(GSA_PACKAGE, LENS_ACTIVITY))
-                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK)
-                .setPackage(GSA_PACKAGE)
-                .setData(Uri.parse("google://lens"))
-                .putExtra("lens_activity_params", bundle);
-
-        return intent;
+    private String getDefaultScannerIntentAction() {
+        return mContext.getResources().getString(
+            com.android.internal.R.string.config_defaultQrCodeComponentIntentAction);
     }
 
     private void updateQRCodeScannerActivityDetails() {
         String qrCodeScannerActivity = mDeviceConfigProxy.getString(
                 DeviceConfig.NAMESPACE_SYSTEMUI,
                 SystemUiDeviceConfigFlags.DEFAULT_QR_CODE_SCANNER, "");
+        String qrCodeScannerIntentAction = mDeviceConfigProxy.getString(
+                DeviceConfig.NAMESPACE_SYSTEMUI,
+                SystemUiDeviceConfigFlags.DEFAULT_QR_CODE_SCANNER_INTENT_ACTION, "");
 
         // "" means either the flags is not available or is set to "", and in both the cases we
         // want to use R.string.config_defaultQrCodeComponent
         if (Objects.equals(qrCodeScannerActivity, "")) {
             qrCodeScannerActivity = getDefaultScannerActivity();
+            qrCodeScannerIntentAction = getDefaultScannerIntentAction();
         }
 
         String prevQrCodeScannerActivity = mQRCodeScannerActivity;
@@ -306,6 +303,9 @@ public class QRCodeScannerController implements
             componentName = ComponentName.unflattenFromString(qrCodeScannerActivity);
             intent.setComponent(componentName);
             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (qrCodeScannerIntentAction() && !TextUtils.isEmpty(qrCodeScannerIntentAction)) {
+                intent.setAction(qrCodeScannerIntentAction);
+            }
         }
 
         Intent lensIntent = getLensIntent();

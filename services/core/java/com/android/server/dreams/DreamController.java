@@ -19,7 +19,6 @@ package com.android.server.dreams;
 import static android.content.Intent.FLAG_RECEIVER_FOREGROUND;
 import static android.os.PowerManager.USER_ACTIVITY_EVENT_OTHER;
 import static android.os.PowerManager.USER_ACTIVITY_FLAG_NO_CHANGE_LIGHTS;
-import static android.service.dreams.Flags.allowDreamAttachFailure;
 
 import android.app.ActivityTaskManager;
 import android.app.BroadcastOptions;
@@ -240,7 +239,8 @@ final class DreamController {
         if (mCurrentDream == null || mCurrentDream.mToken != dreamToken
                 || mCurrentDream.mAppTask != null) {
             Slog.e(TAG, "Illegal dream activity start. mCurrentDream.mToken = "
-                    + mCurrentDream.mToken + ", illegal dreamToken = " + dreamToken
+                    + (mCurrentDream == null ? "null" : mCurrentDream.mToken)
+                    + ", illegal dreamToken = " + dreamToken
                     + ". Ending this dream activity.");
             try {
                 appTask.finishAndRemoveTask();
@@ -375,21 +375,22 @@ final class DreamController {
 
             // Current dream stopped, device no longer dreaming.
             if (dream == mCurrentDream) {
+                if (dream.mAppTask != null) {
+                    try {
+                        dream.mAppTask.finishAndRemoveTask();
+                    } catch (RemoteException | RuntimeException e) {
+                        Slog.e(TAG, "Unable to stop dream activity.", e);
+                    }
+                } else {
+                    Slog.e(TAG, "Dream activity is null.");
+                }
+
                 mCurrentDream = null;
 
                 if (mSentStartBroadcast) {
                     mContext.sendBroadcastAsUser(mDreamingStoppedIntent, UserHandle.ALL,
                             null /* receiverPermission */, mDreamingStartedStoppedOptions);
                     mSentStartBroadcast = false;
-                }
-
-                if (mCurrentDream != null && mCurrentDream.mAppTask != null) {
-                    // Finish the dream task in case it hasn't finished by itself already.
-                    try {
-                        mCurrentDream.mAppTask.finishAndRemoveTask();
-                    } catch (RemoteException | RuntimeException e) {
-                        Slog.e(TAG, "Unable to stop dream activity.");
-                    }
                 }
 
                 mListener.onDreamStopped(dream.mToken);
@@ -418,20 +419,12 @@ final class DreamController {
     private void attach(IDreamService service) {
         try {
             service.asBinder().linkToDeath(mCurrentDream, 0);
-            if (allowDreamAttachFailure()) {
-                mCurrentDream.mService = service;
-            }
+            mCurrentDream.mService = service;
             service.attach(mCurrentDream.mToken, mCurrentDream.mCanDoze,
                     mCurrentDream.mIsPreviewMode, mCurrentDream.mDreamingStartedCallback);
         } catch (RemoteException ex) {
             Slog.e(TAG, "The dream service died unexpectedly.", ex);
             stopDream(true /*immediate*/, "attach failed");
-            return;
-        }
-
-        if (!allowDreamAttachFailure()) {
-            mCurrentDream.mService = service;
-            onDreamStarted();
         }
     }
 
@@ -491,10 +484,6 @@ final class DreamController {
             public void sendResult(Bundle data) {
                 mHandler.post(mStopPreviousDreamsIfNeeded);
                 mHandler.post(mReleaseWakeLockIfNeeded);
-
-                if (!allowDreamAttachFailure()) {
-                    return;
-                }
 
                 mHandler.post(() -> {
                     // If the dream has been stopped already, don't do anything.

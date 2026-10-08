@@ -32,12 +32,10 @@ open class ClipboardOverlaySuppressionControllerImpl @Inject constructor() :
         clipSource: String?,
         isEmulator: Boolean,
     ): Boolean {
-        if (clipData != null && clipData.description.extras != null) {
-            if (clipData.description.extras.getBoolean(EXTRA_SUPPRESS_OVERLAY, false)) {
-                return true
-            }
-        }
-        if (!(isEmulator || SHELL_PACKAGE == clipSource)) {
+        if (
+            !(isEmulator ||
+                (clipSource != null && ClipboardListener.ALLOWED_PACKAGES.contains(clipSource)))
+        ) {
             return false
         }
         return false
@@ -45,7 +43,6 @@ open class ClipboardOverlaySuppressionControllerImpl @Inject constructor() :
 
     companion object {
         @VisibleForTesting const val SHELL_PACKAGE = "com.android.shell"
-
         @VisibleForTesting
         const val EXTRA_SUPPRESS_OVERLAY = "com.android.systemui.SUPPRESS_CLIPBOARD_OVERLAY"
     }

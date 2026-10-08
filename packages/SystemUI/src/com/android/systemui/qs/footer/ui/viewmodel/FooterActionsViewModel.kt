@@ -50,8 +50,6 @@ import com.android.systemui.qs.panels.ui.viewmodel.TextFeedbackContentViewModel.
 import com.android.systemui.qs.panels.ui.viewmodel.TextFeedbackViewModel
 import com.android.systemui.res.R
 import com.android.systemui.shade.ShadeDisplayAware
-import com.android.systemui.statusbar.policy.KeyguardStateController
-import com.android.systemui.user.domain.interactor.HeadlessSystemUserMode
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor
 import com.android.systemui.util.icuMessageFormat
 import javax.inject.Inject
@@ -136,7 +134,6 @@ class FooterActionsViewModel(
         private val activityStarter: ActivityStarter,
         private val textFeedbackInteractor: TextFeedbackInteractor,
         private val selectedUserInteractor: SelectedUserInteractor,
-        private val hsum: HeadlessSystemUserMode,
         @Named(PM_LITE_ENABLED) private val showPowerButton: Boolean,
         private val keyguardStateController: KeyguardStateController
     ) {
@@ -167,8 +164,6 @@ class FooterActionsViewModel(
                 activityStarter,
                 showPowerButton,
                 selectedUserInteractor,
-                hsum,
-                keyguardStateController,
             )
         }
 
@@ -195,8 +190,6 @@ class FooterActionsViewModel(
                 activityStarter,
                 showPowerButton,
                 selectedUserInteractor,
-                hsum,
-                keyguardStateController,
             )
         }
     }
@@ -211,8 +204,6 @@ fun createFooterActionsViewModel(
     activityStarter: ActivityStarter,
     showPowerButton: Boolean,
     selectedUserInteractor: SelectedUserInteractor,
-    hsum: HeadlessSystemUserMode,
-    keyguardStateController: KeyguardStateController
 ): FooterActionsViewModel {
 
     val vibrator = appContext.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
@@ -328,10 +319,10 @@ fun createFooterActionsViewModel(
         userSwitcherViewModel(qsThemedContext, footerActionsInteractor, ::onUserSwitcherClicked)
 
     val settings =
-        selectedUserInteractor.selectedUser
-            .map { selectedUserId ->
-                SettingsActionViewModel(qsThemedContext, ::onSettingsButtonClicked, ::onSettingsButtonLongClicked).takeUnless {
-                    hsuQsChanges() && hsum.isHeadlessSystemUser(selectedUserId)
+        selectedUserInteractor.isCurrentUserHeadlessSystemUser
+            .map { isHeadlessSystemUser ->
+                SettingsActionViewModel(qsThemedContext, ::onSettingsButtonClicked).takeUnless {
+                    hsuQsChanges() && isHeadlessSystemUser
                 }
             }
             .distinctUntilChanged()
@@ -392,9 +383,9 @@ fun securityButtonViewModel(
 ): FooterActionsSecurityButtonViewModel {
     val (icon, text, isClickable) = config
     return FooterActionsSecurityButtonViewModel(
-        icon,
-        text,
-        if (isClickable) onSecurityButtonClicked else null,
+        icon = icon,
+        text = text,
+        onClick = if (isClickable) onSecurityButtonClicked else null,
     )
 }
 
@@ -414,7 +405,7 @@ fun foregroundServicesButtonViewModel(
         )
 
     return FooterActionsForegroundServicesButtonViewModel(
-        foregroundServicesCount,
+        foregroundServicesCount = foregroundServicesCount,
         text = text,
         displayText = securityModel == null && textFeedbackModel == TextFeedbackModel.NoFeedback,
         hasNewChanges = hasNewChanges,

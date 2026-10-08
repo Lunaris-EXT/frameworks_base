@@ -38,7 +38,6 @@ constructor(
     private val viewModel: ScreenshotViewModel,
     private val actionsProviderFactory: ScreenshotActionsProvider.Factory,
     @Assisted val actionExecutor: ActionExecutor,
-    @Assisted private val onSaveToStorageRequested: (Consumer<ScreenshotSavedResult?>) -> Unit,
 ) {
     private val actionProviders: MutableMap<UUID, ScreenshotActionsProvider> = mutableMapOf()
     private var currentScreenshotId: UUID? = null
@@ -64,7 +63,7 @@ constructor(
         actionProviders[screenshotId]?.onAssistContent(assistContent)
     }
 
-    fun onScrollChipReady(screenshotId: UUID, onClick: Runnable) {
+    fun onScrollChipReady(screenshotId: UUID, onClick: ScrollClickCallback) {
         if (screenshotId == currentScreenshotId) {
             actionProviders[screenshotId]?.onScrollChipReady(onClick)
         }
@@ -100,7 +99,7 @@ constructor(
         fun provideActionButton(
             appearance: ActionButtonAppearance,
             showDuringEntrance: Boolean,
-            onClick: () -> Unit
+            onClick: () -> Unit,
         ): Int {
             if (screenshotId == currentScreenshotId) {
                 return viewModel.addAction(appearance, showDuringEntrance, onClick)

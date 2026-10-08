@@ -17,24 +17,17 @@
 package com.android.systemui.screenrecord.service;
 
 import com.android.systemui.mediaprojection.MediaProjectionCaptureTarget;
+import com.android.systemui.screenrecord.shared.model.ScreenRecordingParameters;
+import com.android.systemui.screenrecord.service.IScreenRecordingServiceCallback;
 
 /** Interface implemented by ScreenshotCrossProfileService */
 interface IScreenRecordingService {
 
-    void setCallback(com.android.systemui.screenrecord.service.IScreenRecordingServiceCallback callback);
+    void setCallback(IScreenRecordingServiceCallback callback);
+
     void stopRecording(int reason);
-    void startRecording(
-        in MediaProjectionCaptureTarget captureTarget,
-        int audioSource,
-        int displayId,
-        boolean shouldShowTaps,
-        boolean lowQuality,
-        boolean longerDuration,
-        boolean hevc,
-        int resolutionMode,
-        int fpsMode,
-        int timeLimitMs,
-        long fileSizeBytes,
-        float bitrateMultiplier
-    );
+
+    void startRecording(in ScreenRecordingParameters parameters);
+
+    void updateParameters(in ScreenRecordingParameters parameters);
 }

@@ -125,7 +125,12 @@ class AppInfoProvider(private val packageInfo: PackageInfo) {
         val context = LocalContext.current
         val footer =
             remember(packageInfo) {
-                getFooterText(context)
+                val list = mutableListOf<String>()
+                packageInfo.versionNameBidiWrapped?.let {
+                    list += context.getString(R.string.version_text, it)
+                }
+                list += packageInfo.packageName
+                list.joinToString(separator = System.lineSeparator())
             }
         if (footer.isBlank()) return
         if (!isSpaExpressiveEnabled) HorizontalDivider()

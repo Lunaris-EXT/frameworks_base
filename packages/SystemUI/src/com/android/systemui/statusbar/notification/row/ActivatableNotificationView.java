@@ -16,6 +16,7 @@
 
 package com.android.systemui.statusbar.notification.row;
 
+import static com.android.systemui.Flags.lockscreenBlurForNotifications;
 import static com.android.systemui.Flags.notificationAppearNonlinear;
 import static com.android.systemui.Flags.notificationBackgroundTintOptimization;
 import static com.android.systemui.Flags.physicalNotificationMovement;
@@ -42,6 +43,7 @@ import android.view.View;
 import android.view.animation.Interpolator;
 
 import androidx.annotation.VisibleForTesting;
+
 import com.android.app.animation.Interpolators;
 import com.android.internal.jank.InteractionJankMonitor;
 import com.android.internal.jank.InteractionJankMonitor.Configuration;
@@ -237,6 +239,7 @@ public abstract class ActivatableNotificationView extends ExpandableOutlineView 
      */
     protected void initBackground() {
         mBackgroundNormal.setCustomBackground(R.drawable.notification_material_bg);
+        mBackgroundNormal.setBlurBackgroundEnabled(usesBlurredBackground());
     }
 
     protected boolean hideBackground() {
@@ -429,28 +432,19 @@ public abstract class ActivatableNotificationView extends ExpandableOutlineView 
 
     public void setIsBlurSupported(boolean isBlurSupported) {
         mIsBlurSupported = isBlurSupported;
-        updateIfNeeded();
-    }
-
-    public void setIsLockscreenBlurSupported(boolean isBlurSupported) {
-        mIsLockscreenBlurSupported = isBlurSupported;
-        updateIfNeeded();
-    }
-
-    /** Updates background blur/transparency when transparent state changes. */
-    public void updateIfNeeded() {
-        boolean transparent = usesTransparentBackground();
-        if (mUseTransparent != transparent) {
-            mUseTransparent = transparent;
-            if (mBackgroundNormal != null) {
-                mBackgroundNormal.setIsBlurSupported(transparent);
-            }
-            updateBackgroundColors();
+        if (usedTransparentBackground != usesTransparentBackground()) {
+            updateBackgroundTint();
+            mBackgroundNormal.setBlurBackgroundEnabled(usesBlurredBackground());
         }
     }
 
+    protected boolean usesBlurredBackground() {
+        return usesTransparentBackground() && lockscreenBlurForNotifications();
+    }
+
     protected boolean usesTransparentBackground() {
-        return mIsBlurSupported && !mOnKeyguard;
+        return mIsBlurSupported && notificationRowTransparency()
+                && (!mOnKeyguard || lockscreenBlurForNotifications());
     }
 
     @Override
@@ -950,10 +944,9 @@ public abstract class ActivatableNotificationView extends ExpandableOutlineView 
         if (mOnKeyguard == onKeyguard) {
             return;
         }
-
         mOnKeyguard = onKeyguard;
-        updateAxBlurEnabled();
-        if (mIsBlurSupported) {
+        mBackgroundNormal.setOnKeyguard(mOnKeyguard);
+        if (notificationRowTransparency()) {
             updateBackgroundTint();
         }
     }

@@ -156,6 +156,8 @@ public class ViewState implements Dumpable {
 
     public boolean gone;
     public boolean hidden;
+    public String mAlphaReason;
+    public String mYTranslationSource;
 
     private float mAlpha;
     private float mXTranslation;
@@ -169,6 +171,10 @@ public class ViewState implements Dumpable {
         return mAlpha;
     }
 
+    public String getAlphaReason() {
+        return mAlphaReason;
+    }
+
     public void setUsePhysicsForMovement(boolean usePhysicsForMovement) {
         this.mUsePhysicsForMovement = usePhysicsForMovement;
     }
@@ -176,9 +182,10 @@ public class ViewState implements Dumpable {
     /**
      * @param alpha View transparency.
      */
-    public void setAlpha(float alpha) {
+    public void setAlpha(float alpha, String reason) {
         if (isValidFloat(alpha, "alpha")) {
             this.mAlpha = alpha;
+            this.mAlphaReason = reason;
         }
     }
 
@@ -201,17 +208,18 @@ public class ViewState implements Dumpable {
 
     /**
      * @param yTranslation y-axis translation value for the animation.
+     * @param source A string literal that identifies the caller.
      */
-    public void setYTranslation(float yTranslation) {
+    public void setYTranslation(float yTranslation, String source) {
         if (isValidFloat(yTranslation, "yTranslation")) {
             this.mYTranslation = yTranslation;
+            this.mYTranslationSource = source;
         }
     }
 
     public float getZTranslation() {
         return mZTranslation;
     }
-
 
     /**
      * @param zTranslation z-axis translation value for the animation.
@@ -262,8 +270,10 @@ public class ViewState implements Dumpable {
 
     public void copyFrom(ViewState viewState) {
         mAlpha = viewState.mAlpha;
+        mAlphaReason = viewState.mAlphaReason;
         mXTranslation = viewState.mXTranslation;
         mYTranslation = viewState.mYTranslation;
+        mYTranslationSource = viewState.mYTranslationSource;
         mZTranslation = viewState.mZTranslation;
         gone = viewState.gone;
         hidden = viewState.hidden;
@@ -274,8 +284,10 @@ public class ViewState implements Dumpable {
 
     public void initFrom(View view) {
         mAlpha = view.getAlpha();
+        mAlphaReason = "initFrom";
         mXTranslation = view.getTranslationX();
         mYTranslation = view.getTranslationY();
+        mYTranslationSource = "ViewState.initFrom";
         mZTranslation = view.getTranslationZ();
         gone = view.getVisibility() == View.GONE;
         hidden = view.getVisibility() == View.INVISIBLE;
@@ -310,6 +322,9 @@ public class ViewState implements Dumpable {
             } else if (view.getTranslationY() != this.mYTranslation) {
                 view.setTranslationY(this.mYTranslation);
             }
+        }
+        if (view instanceof ExpandableView) {
+            ((ExpandableView) view).setYTranslationSource(this.mYTranslationSource);
         }
 
         // apply zTranslation
@@ -444,7 +459,6 @@ public class ViewState implements Dumpable {
             // We don't want views to change visibility when they are animating to GONE
             alphaChanging &= !((ExpandableView) child).willBeGone();
         }
-
         // start translationX animation
         if (child.getTranslationX() != this.mXTranslation) {
             startXTranslationAnimation(child, animationProperties);
@@ -753,6 +767,9 @@ public class ViewState implements Dumpable {
             } else {
                 // no new animation needed, let's just apply the value
                 child.setTranslationY(newEndValue);
+                if (child instanceof ExpandableView) {
+                    ((ExpandableView) child).setYTranslationSource(this.mYTranslationSource);
+                }
                 return;
             }
         }

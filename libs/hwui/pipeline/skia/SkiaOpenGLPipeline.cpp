@@ -161,7 +161,7 @@ IRenderPipeline::DrawResult SkiaOpenGLPipeline::draw(
         preTransform = SkMatrix::I();
     }
 
-    SkPoint lightCenter = preTransform.mapXY(lightGeometry.center.x, lightGeometry.center.y);
+    SkPoint lightCenter = preTransform.mapPoint({lightGeometry.center.x, lightGeometry.center.y});
     LightGeometry localGeometry = lightGeometry;
     localGeometry.center.x = lightCenter.fX;
     localGeometry.center.y = lightCenter.fY;

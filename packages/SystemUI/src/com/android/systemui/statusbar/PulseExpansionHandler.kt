@@ -96,7 +96,8 @@ constructor(
                         pulseExpandAbortListener?.run()
                     }
                 }
-                headsUpManager.unpinAll(/* userUnPinned= */ true)
+                headsUpManager.unpinAll(/* userUnPinned= */ true,
+                    "PulseExpansionHandler.isExpanding=false")
             }
         }
 
@@ -265,7 +266,7 @@ constructor(
     private fun finishExpansion() {
         val startingChild = mStartingChild
         if (mStartingChild != null) {
-            setUserLocked(mStartingChild!!, false)
+            setUserSwipingToExpandRow(mStartingChild!!, false)
             mStartingChild = null
         }
         if (statusBarStateController.isDozing) {
@@ -308,7 +309,7 @@ constructor(
         if (mStartingChild == null && !bypassController.bypassEnabled) {
             mStartingChild = findView(x, y)
             if (mStartingChild != null) {
-                setUserLocked(mStartingChild!!, true)
+                setUserSwipingToExpandRow(mStartingChild!!, true)
             }
         }
     }
@@ -319,7 +320,7 @@ constructor(
         animationDuration: Long = SPRING_BACK_ANIMATION_LENGTH_MS.toLong(),
     ) {
         if (child.actualHeight == child.collapsedHeight) {
-            setUserLocked(child, false)
+            setUserSwipingToExpandRow(child, false)
             return
         }
         val anim = ValueAnimator.ofInt(child.actualHeight, child.collapsedHeight)
@@ -332,16 +333,16 @@ constructor(
         anim.addListener(
             object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
-                    setUserLocked(child, false)
+                    setUserSwipingToExpandRow(child, false)
                 }
             }
         )
         anim.start()
     }
 
-    private fun setUserLocked(child: ExpandableView, userLocked: Boolean) {
+    private fun setUserSwipingToExpandRow(child: ExpandableView, isUserSwiping: Boolean) {
         if (child is ExpandableNotificationRow) {
-            child.isUserLocked = userLocked
+            child.isUserSwipingToExpandRow = isUserSwiping
         }
     }
 

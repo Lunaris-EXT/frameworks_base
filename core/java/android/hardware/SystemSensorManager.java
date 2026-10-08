@@ -22,8 +22,10 @@ import static android.companion.virtual.VirtualDeviceParams.DEVICE_POLICY_INVALI
 import static android.companion.virtual.VirtualDeviceParams.POLICY_TYPE_SENSORS;
 import static android.content.Context.DEVICE_ID_DEFAULT;
 import static android.content.pm.PackageManager.PERMISSION_GRANTED;
+import static android.hardware.flags.Flags.suspendSensorEventDeliveryOnFrozenPid;
 
 import android.companion.virtual.VirtualDeviceManager;
+import android.companion.virtual.VirtualDeviceParams;
 import android.compat.Compatibility;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledAfter;
@@ -34,10 +36,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
-import android.database.ContentObserver;
-import android.net.Uri;
+import android.hardware.sensor.ISensorClientListener;
 import android.os.Build;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.MemoryFile;
 import android.os.MessageQueue;
@@ -112,6 +114,7 @@ public class SystemSensorManager extends SensorManager {
 
     private static native int nativeSetOperationParameter(
             long nativeInstance, int handle, int type, float[] floatValues, int[] intValues);
+    private static native void nativeRegisterClientListener(long nativeInstance, IBinder listener);
 
     private static final Object sLock = new Object();
     @GuardedBy("sLock")
@@ -152,9 +155,15 @@ public class SystemSensorManager extends SensorManager {
 
     private Optional<Boolean> mHasHighSamplingRateSensorsPermission = Optional.empty();
 
-    private String mBlockedPackageList;
-    private final Set<String> mBlockedApps =
-        Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private static ISensorClientListener sSensorClientListener;
+
+    static {
+        if (suspendSensorEventDeliveryOnFrozenPid()) {
+            sSensorClientListener = new ISensorClientListener.Stub() {
+                // This is an empty implementation, as the service only needs the Binder object.
+            };
+        }
+    }
 
     /** @hide */
     public SystemSensorManager(Context context, Looper mainLooper) {
@@ -172,7 +181,14 @@ public class SystemSensorManager extends SensorManager {
         mNativeInstance = nativeCreate(context.getOpPackageName());
         mIsPackageDebuggable = (0 != (appInfo.flags & ApplicationInfo.FLAG_DEBUGGABLE));
 
-        // initialize the sensor list
+        if (suspendSensorEventDeliveryOnFrozenPid()) {
+            if (sSensorClientListener == null) {
+                Log.e(TAG, "sSensorClientListener is null when flag enabled");
+            } else {
+                nativeRegisterClientListener(mNativeInstance, sSensorClientListener.asBinder());
+            }
+        }
+       // initialize the sensor list
         if (getSensorPolicy(mContext.getDeviceId()) == DEVICE_POLICY_CUSTOM) {
             createRuntimeSensorListLocked(mContext.getDeviceId());
         } else {
@@ -1336,9 +1352,10 @@ public class SystemSensorManager extends SensorManager {
                 parameter.type, parameter.floatValues, parameter.intValues) == 0;
     }
 
+    @VirtualDeviceParams.DevicePolicy
     private int getSensorPolicy(int deviceId) {
         if (deviceId == DEVICE_ID_DEFAULT) {
-            return DEVICE_ID_DEFAULT;
+            return DEVICE_POLICY_DEFAULT;
         }
         if (mVdm == null) {
             mVdm = mContext.getSystemService(VirtualDeviceManager.class);

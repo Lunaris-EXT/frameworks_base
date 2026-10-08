@@ -16,12 +16,16 @@
 
 package com.android.systemui.statusbar.notification.stack.ui.viewbinder
 
+import android.view.View
+import androidx.compose.ui.geometry.Offset
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import com.android.compose.animation.scene.Scale
 import com.android.systemui.Flags
 import com.android.systemui.common.ui.view.onLayoutChanged
 import com.android.systemui.communal.domain.interactor.CommunalSettingsInteractor
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.dagger.qualifiers.AndroidUi
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.keyguard.ui.viewmodel.ViewStateAccessor
@@ -33,7 +37,9 @@ import com.android.systemui.statusbar.notification.stack.NotificationStackSizeCa
 import com.android.systemui.statusbar.notification.stack.ui.view.SharedNotificationContainer
 import com.android.systemui.statusbar.notification.stack.ui.viewmodel.SharedNotificationContainerViewModel
 import com.android.systemui.util.kotlin.DisposableHandles
+import com.android.systemui.util.kotlin.buildDisposableHandle
 import javax.inject.Inject
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.DisposableHandle
 import kotlinx.coroutines.flow.combine
@@ -50,6 +56,7 @@ constructor(
     private val notificationStackSizeCalculator: NotificationStackSizeCalculator,
     private val notificationScrollViewBinder: NotificationScrollViewBinder,
     private val communalSettingsInteractor: CommunalSettingsInteractor,
+    @AndroidUi private val androidUiDispatcher: CoroutineContext,
     @Main private val mainImmediateDispatcher: CoroutineDispatcher,
     val keyguardInteractor: KeyguardInteractor,
 ) {
@@ -97,7 +104,9 @@ constructor(
          * instead of doing a post() to the main thread. This extra delay can cause visible jitter.
          */
         disposables +=
-            view.repeatWhenAttached(mainImmediateDispatcher) {
+            view.repeatWhenAttached(
+                if (SceneContainerFlag.isEnabled) androidUiDispatcher else mainImmediateDispatcher
+            ) {
                 repeatOnLifecycle(Lifecycle.State.CREATED) {
                     if (!SceneContainerFlag.isEnabled) {
                         launch {
@@ -190,7 +199,12 @@ constructor(
                         launch { viewModel.blurRadius.distinctUntilChanged().collect { controller.setBlurRadius(it) } }
                     }
 
-                    if (communalSettingsInteractor.isCommunalFlagEnabled()) {
+                    // When SceneContainer is enabled. fading keyguard elements during this
+                    // transition is controlled by STL transitions.
+                    if (
+                        !SceneContainerFlag.isEnabled &&
+                            communalSettingsInteractor.isCommunalFlagEnabled()
+                    ) {
                         launch {
                             viewModel.glanceableHubAlpha.collect {
                                 controller.setMaxAlphaForGlanceableHub(it)
@@ -211,6 +225,15 @@ constructor(
 
         if (SceneContainerFlag.isEnabled) {
             disposables += notificationScrollViewBinder.bindWhileAttached()
+            disposables += buildDisposableHandle {
+                register(
+                    viewModel.containerScale.observe { drawScale ->
+                        // Applying the scale directly on the View, because with SceneContainer,
+                        // this is the only place where SharedContainer's scale is modified.
+                        view.setDrawScale(drawScale)
+                    }
+                )
+            }
         }
 
         controller.setOnHeightChangedRunnable { viewModel.notificationStackChanged() }
@@ -226,5 +249,22 @@ constructor(
         disposables += view.onLayoutChanged { viewModel.notificationStackChanged() }
 
         return disposables
+    }
+}
+
+/** Sets an STL [Scale] on a regular [View]. */
+private fun View.setDrawScale(drawScale: Scale) {
+    scaleX = drawScale.scaleX
+    scaleY = drawScale.scaleY
+    applyPivot(drawScale.pivot)
+}
+
+/** Sets a fraction based pivot on the [View]. */
+private fun View.applyPivot(pivot: Offset) {
+    if (pivot != Offset.Unspecified) {
+        pivotX = width * pivot.x
+        pivotY = height * pivot.y
+    } else if (isPivotSet) {
+        resetPivot()
     }
 }

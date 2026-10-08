@@ -14,10 +14,14 @@
  * limitations under the License.
  */
 
-#include "core_jni_helpers.h"
+#include <android-base/logging.h>
 #include <cutils/ashmem.h>
 #include <linux/ashmem.h>
 #include <sys/mman.h>
+
+#include <atomic>
+
+#include "core_jni_helpers.h"
 
 namespace android {
 
@@ -122,9 +126,8 @@ static jlong android_util_MemoryIntArray_open(JNIEnv* env, jobject clazz, jint f
     return reinterpret_cast<jlong>(ashmemAddr);
 }
 
-static void android_util_MemoryIntArray_close(JNIEnv* env, jobject clazz, jint fd,
-    jlong ashmemAddr, jboolean owner, jint size)
-{
+static void android_util_MemoryIntArray_close(JNIEnv* env, jobject clazz, jint fd, jlong ashmemAddr,
+                                              jint size) {
     if (fd < 0) {
         jniThrowException(env, "java/io/IOException", "bad file descriptor");
         return;
@@ -147,56 +150,21 @@ static void android_util_MemoryIntArray_close(JNIEnv* env, jobject clazz, jint f
         return;
     }
 
-    // We don't deallocate the atomic ints we created with placement new in the ashmem
-    // region as the kernel we reclaim all pages when the ashmem region is destroyed.
-    if (owner && (ashmem_unpin_region(fd, 0, 0) != ASHMEM_IS_UNPINNED)) {
-        jniThrowException(env, "java/io/IOException", "ashmem unpinning failed");
-        return;
-    }
+    // We don't deallocate the atomic ints we created with placement new in the ashmem region, even
+    // as the owner; the kernel will reclaim those pages when the ashmem region is destroyed.
 
     close(fd);
 }
 
-static jint android_util_MemoryIntArray_get(JNIEnv* env, jobject clazz,
-        jint fd, jlong address, jint index)
-{
-    if (fd < 0) {
-        jniThrowException(env, "java/io/IOException", "bad file descriptor");
-        return -1;
-    }
-
-    if (!ashmem_valid(fd)) {
-        jniThrowIOException(env, errno);
-        return -1;
-    }
-
-    if (ashmem_pin_region(fd, 0, 0) == ASHMEM_WAS_PURGED) {
-        jniThrowException(env, "java/io/IOException", "ashmem region was purged");
-        return -1;
-    }
-
+static jint android_util_MemoryIntArray_get(JNIEnv* env, jobject clazz, jlong address, jint index) {
+    DCHECK_GT(address, 0);
     std::atomic_int* value = reinterpret_cast<std::atomic_int*>(address) + index;
     return value->load(std::memory_order_relaxed);
 }
 
-static void android_util_MemoryIntArray_set(JNIEnv* env, jobject clazz,
-        jint fd, jlong address, jint index, jint newValue)
-{
-    if (fd < 0) {
-        jniThrowException(env, "java/io/IOException", "bad file descriptor");
-        return;
-    }
-
-    if (!ashmem_valid(fd)) {
-        jniThrowIOException(env, errno);
-        return;
-    }
-
-    if (ashmem_pin_region(fd, 0, 0) == ASHMEM_WAS_PURGED) {
-        jniThrowException(env, "java/io/IOException", "ashmem region was purged");
-        return;
-    }
-
+static void android_util_MemoryIntArray_set(JNIEnv* env, jobject clazz, jlong address, jint index,
+                                            jint newValue) {
+    DCHECK_GT(address, 0);
     std::atomic_int* value = reinterpret_cast<std::atomic_int*>(address) + index;
     value->store(newValue, std::memory_order_relaxed);
 }
@@ -223,9 +191,11 @@ static jint android_util_MemoryIntArray_size(JNIEnv* env, jobject clazz, jint fd
 static const JNINativeMethod methods[] = {
     {"nativeCreate",  "(Ljava/lang/String;I)I", (void*)android_util_MemoryIntArray_create},
     {"nativeOpen",  "(IZI)J", (void*)android_util_MemoryIntArray_open},
-    {"nativeClose", "(IJZI)V", (void*)android_util_MemoryIntArray_close},
-    {"nativeGet",  "(IJI)I", (void*)android_util_MemoryIntArray_get},
-    {"nativeSet", "(IJII)V", (void*) android_util_MemoryIntArray_set},
+    {"nativeClose", "(IJI)V", (void*)android_util_MemoryIntArray_close},
+    // @FastNative
+    {"nativeGet",  "(JI)I", (void*)android_util_MemoryIntArray_get},
+    // @FastNative
+    {"nativeSet", "(JII)V", (void*) android_util_MemoryIntArray_set},
     {"nativeSize", "(I)I", (void*) android_util_MemoryIntArray_size},
 };
 

@@ -21,8 +21,7 @@ import android.database.ContentObserver
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-import android.os.UserHandle
-import android.provider.Settings
+import android.os.UserManager
 import android.service.quicksettings.Tile
 import android.text.TextUtils
 import android.text.format.Formatter
@@ -40,6 +39,7 @@ import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.plugins.qs.QSTile
+import com.android.systemui.plugins.qs.TileDetailsViewModel
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.qs.QSHost
 import com.android.systemui.qs.QsEventLogger
@@ -47,6 +47,7 @@ import com.android.systemui.qs.logging.QSLogger
 import com.android.systemui.qs.tileimpl.QSTileImpl
 import com.android.systemui.qs.tiles.base.shared.model.QSTileConfigProvider
 import com.android.systemui.qs.tiles.base.shared.model.QSTileState
+import com.android.systemui.qs.tiles.dialog.InternetDetailsViewModel
 import com.android.systemui.qs.tiles.impl.wifi.domain.interactor.WifiTileDataInteractor
 import com.android.systemui.qs.tiles.impl.wifi.domain.interactor.WifiTileUserActionInteractor
 import com.android.systemui.qs.tiles.impl.wifi.domain.model.WifiTileModel
@@ -73,6 +74,7 @@ constructor(
     private val dataInteractor: WifiTileDataInteractor,
     private val tileMapper: WifiTileMapper,
     private val userActionInteractor: WifiTileUserActionInteractor,
+    private val internetDetailsViewModelFactory: InternetDetailsViewModel.Factory,
 ) :
     QSTileImpl<QSTile.State?>(
         host,
@@ -163,6 +165,8 @@ constructor(
         val model = arg as? WifiTileModel ?: return
         tileState = tileMapper.map(config, model)
 
+        checkIfRestrictionEnforcedByAdminOnly(state, UserManager.DISALLOW_CHANGE_WIFI_STATE)
+
         state?.apply {
             this.state = tileState.activationState.legacyState
             icon =
@@ -186,10 +190,17 @@ constructor(
 
             contentDescription = tileState.contentDescription
             expandedAccessibilityClassName = tileState.expandedAccessibilityClassName
-            handlesSecondaryClick = false
+            handlesSecondaryClick =
+                !state.disabledByPolicy &&
+                    tileState.supportedActions.contains(QSTileState.UserAction.TOGGLE_CLICK)
             handlesLongClick =
-                tileState.supportedActions.contains(QSTileState.UserAction.LONG_CLICK)
+                !state.disabledByPolicy &&
+                    tileState.supportedActions.contains(QSTileState.UserAction.LONG_CLICK)
         }
+    }
+
+    override fun getDetailsViewModel(): TileDetailsViewModel {
+        return internetDetailsViewModelFactory.create()
     }
 
     override fun isAvailable(): Boolean {

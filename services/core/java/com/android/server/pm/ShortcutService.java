@@ -26,6 +26,8 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.UserIdInt;
 import android.app.ActivityManager;
+import android.app.ActivityManager.ProcessCapability;
+import android.app.ActivityManager.ProcessState;
 import android.app.ActivityManagerInternal;
 import android.app.ActivityOptions;
 import android.app.AppGlobals;
@@ -116,6 +118,7 @@ import android.view.IWindowManager;
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.content.PackageMonitor;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.util.CollectionUtils;
 import com.android.internal.util.DumpUtils;
@@ -488,8 +491,68 @@ public class ShortcutService extends IShortcutService.Stub {
         }
     }
 
+    @VisibleForTesting
+    final PackageMonitor myPackageMonitor = new PackageMonitor() {
+        @Override
+        public void onPackageAppLockEnabled(String packageName) {
+            if(android.content.pm.Flags.appLockShortcutRemoval()) {
+                if(DEBUG) {
+                    Slog.d(TAG, "App Lock enabled for: " + packageName
+                            + "removing all pinned shortcuts");
+                }
+                handleAppLockEnabled(packageName, getChangingUserId());
+            }
+        }
+
+        @Override
+        public void onPackageAppLockDisabled(String packageName) {
+            if (android.content.pm.Flags.appLockShortcutRemoval()) {
+                if (DEBUG) {
+                    Slog.d(TAG, "App Lock disabled for: " + packageName
+                            + "re-enabling all pinned shortcuts");
+                }
+                handleAppLockDisabled(packageName, getChangingUserId());
+            }
+        }
+    };
+
     public ShortcutService(Context context) {
         this(context, getBgLooper(), /*onyForPackgeManagerApis*/ false);
+    }
+
+    @VisibleForTesting
+    void handleAppLockEnabled(String packageName, int userId) {
+        synchronized (mServiceLock) {
+            final ShortcutUser user = getUserShortcutsLocked(userId);
+            if (user == null) {
+                return;
+            }
+            AtomicBoolean pinnedShortcutsRemoved = new AtomicBoolean(false);
+            // Remove pinned shortcuts from all launchers.
+            user.forAllLaunchers(l -> {
+                if (l.cleanUpPackage(packageName, userId)) {
+                    pinnedShortcutsRemoved.set(true);
+                }
+            });
+            if (pinnedShortcutsRemoved.get()) {
+                // Now there may be orphan shortcuts because we removed pinned shortcuts at the
+                // previous step. Remove them too.
+                user.forAllPackages(p -> p.refreshPinnedFlags());
+                notifyListeners(packageName, userId);
+            }
+            user.rescanPackageIfNeeded(packageName, /* forceRescan=*/ true);
+        }
+    }
+
+    void handleAppLockDisabled(String packageName, int userId) {
+        synchronized (mServiceLock) {
+            final ShortcutUser user = getUserShortcutsLocked(userId);
+            if (user == null) {
+                return;
+            }
+            // Rescan the package to parse all the manifest shortcuts again.
+            user.rescanPackageIfNeeded(packageName, /* forceRescan=*/ true);
+        }
     }
 
     private static Looper getBgLooper() {
@@ -601,7 +664,8 @@ public class ShortcutService extends IShortcutService.Stub {
 
     final private IUidObserver mUidObserver = new UidObserver() {
         @Override
-        public void onUidStateChanged(int uid, int procState, long procStateSeq, int capability) {
+        public void onUidStateChanged(int uid, @ProcessState int procState,
+                long procStateSeq, @ProcessCapability int capability) {
             injectPostToHandler(() -> handleOnUidStateChanged(uid, procState));
         }
 
@@ -612,7 +676,7 @@ public class ShortcutService extends IShortcutService.Stub {
         }
     };
 
-    void handleOnUidStateChanged(int uid, int procState) {
+    void handleOnUidStateChanged(int uid, @ProcessState int procState) {
         if (DEBUG_PROCSTATE) {
             Slog.d(TAG, "onUidStateChanged: uid=" + uid + " state=" + procState);
         }
@@ -630,7 +694,7 @@ public class ShortcutService extends IShortcutService.Stub {
         Trace.traceEnd(Trace.TRACE_TAG_SYSTEM_SERVER);
     }
 
-    private boolean isProcessStateForeground(int processState) {
+    private boolean isProcessStateForeground(@ProcessState int processState) {
         return processState <= PROCESS_STATE_FOREGROUND_THRESHOLD;
     }
 
@@ -672,6 +736,8 @@ public class ShortcutService extends IShortcutService.Stub {
         @Override
         public void onStart() {
             publishBinderService(Context.SHORTCUT_SERVICE, mService);
+            mService.myPackageMonitor.register(mService.mContext, mService.mHandler.getLooper(),
+                UserHandle.ALL, true);
         }
 
         @Override
@@ -1688,8 +1754,7 @@ public class ShortcutService extends IShortcutService.Stub {
         if (systemChooser == null) {
             return false;
         }
-        int uid = injectGetPackageUid(systemChooser.getPackageName(), UserHandle.USER_SYSTEM);
-        return UserHandle.getAppId(uid) == UserHandle.getAppId(callingUid);
+        return injectIsSameApp(systemChooser.getPackageName(), UserHandle.USER_SYSTEM, callingUid);
     }
 
     private void enforceSystemOrShell() {
@@ -1762,7 +1827,7 @@ public class ShortcutService extends IShortcutService.Stub {
         if (UserHandle.getUserId(callingUid) != userId) {
             throw new SecurityException("Invalid userId");
         }
-        if (injectGetPackageUid(packageName, userId) != callingUid) {
+        if (!injectIsSameApp(packageName, userId, callingUid)) {
             throw new SecurityException("Calling package name mismatch");
         }
         Preconditions.checkState(!isEphemeralApp(packageName, userId),
@@ -2169,6 +2234,10 @@ public class ShortcutService extends IShortcutService.Stub {
             @UserIdInt int userId) {
         verifyCaller(packageName, userId);
 
+        if (isPackageAppLockEnabled(packageName, userId)) {
+            return false;
+        }
+
         final boolean unlimited = injectHasUnlimitedShortcutsApiCallsPermission(
                 injectBinderCallingPid(), injectBinderCallingUid());
         final List<ShortcutInfo> newShortcuts =
@@ -2341,6 +2410,10 @@ public class ShortcutService extends IShortcutService.Stub {
             @UserIdInt int userId) {
         verifyCaller(packageName, userId);
 
+        if (isPackageAppLockEnabled(packageName, userId)) {
+            return false;
+        }
+
         final boolean unlimited = injectHasUnlimitedShortcutsApiCallsPermission(
                 injectBinderCallingPid(), injectBinderCallingUid());
         final List<ShortcutInfo> newShortcuts =
@@ -2406,6 +2479,10 @@ public class ShortcutService extends IShortcutService.Stub {
         verifyShortcutInfoPackage(packageName, shortcut);
         shortcut = sanitizeShortcutSize(shortcut);
         if (shortcut == null) {
+            return;
+        }
+
+        if (isPackageAppLockEnabled(packageName, userId)) {
             return;
         }
 
@@ -2490,7 +2567,7 @@ public class ShortcutService extends IShortcutService.Stub {
     /**
      * Handles {@link #requestPinShortcut} and {@link ShortcutServiceInternal#requestPinAppWidget}.
      * After validating the caller, it passes the request to {@link #mShortcutRequestPinProcessor}.
-     * Either {@param shortcut} or {@param appWidget} should be non-null.
+     * Either {@code shortcut} or {@code appWidget} should be non-null.
      */
     private boolean requestPinItem(String callingPackage, int userId, ShortcutInfo shortcut,
             AppWidgetProviderInfo appWidget, Bundle extras, IntentSender resultIntent) {
@@ -2819,6 +2896,10 @@ public class ShortcutService extends IShortcutService.Stub {
     public int getRemainingCallCount(String packageName, @UserIdInt int userId) {
         verifyCaller(packageName, userId);
 
+        if (isPackageAppLockEnabled(packageName, userId)) {
+            return 0;
+        }
+
         final boolean unlimited = injectHasUnlimitedShortcutsApiCallsPermission(
                 injectBinderCallingPid(), injectBinderCallingUid());
 
@@ -2872,13 +2953,14 @@ public class ShortcutService extends IShortcutService.Stub {
     }
 
     @Override
-    public boolean isRequestPinItemSupported(int callingUserId, int requestType) {
+    public boolean isRequestPinItemSupported(
+        String callingPackageName, int callingUserId, int requestType) {
         verifyCallerUserId(callingUserId);
-
+        verifyCaller(callingPackageName, callingUserId);
         final long token = injectClearCallingIdentity();
         try {
             return mShortcutRequestPinProcessor
-                    .isRequestPinItemSupported(callingUserId, requestType);
+                    .isRequestPinItemSupported(callingPackageName, callingUserId, requestType);
         } finally {
             injectRestoreCallingIdentity(token);
         }
@@ -2995,8 +3077,7 @@ public class ShortcutService extends IShortcutService.Stub {
 
     @VisibleForTesting
     boolean areShortcutsSupportedOnHomeScreen(@UserIdInt int userId) {
-        if (!android.os.Flags.allowPrivateProfile() || !Flags.disablePrivateSpaceItemsOnHome()
-                || !android.multiuser.Flags.enablePrivateSpaceFeatures()) {
+        if (!Flags.disablePrivateSpaceItemsOnHome()) {
             return true;
         }
         final long start = getStatStartTime();
@@ -3694,8 +3775,10 @@ public class ShortcutService extends IShortcutService.Stub {
         }
 
         @Override
-        public boolean isRequestPinItemSupported(int callingUserId, int requestType) {
-            return ShortcutService.this.isRequestPinItemSupported(callingUserId, requestType);
+        public boolean isRequestPinItemSupported(
+            String packageName, int callingUserId, int requestType) {
+            return ShortcutService.this.isRequestPinItemSupported(
+                packageName, callingUserId, requestType);
         }
 
         @Override
@@ -4031,6 +4114,20 @@ public class ShortcutService extends IShortcutService.Stub {
         }
     }
 
+    boolean injectIsSameApp(@NonNull String packageName, @UserIdInt int userId, int callingUid) {
+        final long token = injectClearCallingIdentity();
+        try {
+            return mPackageManagerInternal.isSameApp(packageName, PACKAGE_MATCH_FLAGS, callingUid,
+                    userId);
+        } catch (Exception e) {
+            // Shouldn't happen.
+            Slog.wtf(TAG, "Exception", e);
+            return false;
+        } finally {
+            injectRestoreCallingIdentity(token);
+        }
+    }
+
     /**
      * Returns {@link PackageInfo} unless it's uninstalled or disabled.
      */
@@ -4267,6 +4364,11 @@ public class ShortcutService extends IShortcutService.Stub {
 
     boolean isPackageInstalled(String packageName, int userId) {
         return getApplicationInfo(packageName, userId) != null;
+    }
+
+    boolean isPackageAppLockEnabled(String packageName, int userId) {
+        return android.content.pm.Flags.appLockShortcutRemoval()
+            && mPackageManagerInternal.isPackageAppLockEnabled(packageName, userId);
     }
 
     boolean isEphemeralApp(String packageName, int userId) {

@@ -31,8 +31,8 @@ import android.view.WindowManager
 import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import com.android.systemui.brightness.domain.interactor.BrightnessMirrorShowingInteractor
 import com.android.systemui.lifecycle.repeatWhenAttached
-import com.android.systemui.settings.brightness.domain.interactor.BrightnessMirrorShowingInteractor
 import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -108,7 +108,7 @@ class UdfpsHelper(
         override fun onDisplayAdded(displayId: Int) {}
 
         override fun onDisplayChanged(displayId: Int) {
-            if (displayId == Display.DEFAULT_DISPLAY && view.isAttachedToWindow) {
+            if (displayId == Display.DEFAULT_DISPLAY) {
                 brightnessToAlpha()
                 windowManager.updateViewLayout(view, dimLayoutParams)
             }

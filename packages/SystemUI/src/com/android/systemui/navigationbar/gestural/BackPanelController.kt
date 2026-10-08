@@ -175,10 +175,6 @@ constructor(
     private var triggerLongSwipe = false
     private var isLongSwipeEnabled = false
 
-    private var backArrowVisibility = true
-
-    private var edgeHapticEnabled = true
-
     internal enum class GestureState {
         /* Arrow is off the screen and invisible */
         GONE,
@@ -319,7 +315,6 @@ constructor(
                 startIsLeft = mView.isLeftPanel
                 hasPassedDragSlop = false
                 mView.resetStretch()
-                regionSamplingStart()
                 mView.triggerLongSwipe = false
             }
             MotionEvent.ACTION_MOVE -> {
@@ -737,18 +732,10 @@ constructor(
         setTriggerLongSwipe(isLongSwipeEnabled && triggerLongSwipe)
     }
 
-    override fun setBackArrowVisibility(enabled: Boolean) {
-        backArrowVisibility = enabled
-    }
-
-    override fun setEdgeHapticEnabled(enabled: Boolean) {
-        edgeHapticEnabled = enabled
-    }
-
     private fun setTriggerLongSwipe(enabled: Boolean) {
         if (triggerLongSwipe != enabled) {
             triggerLongSwipe = enabled
-            if (edgeHapticEnabled) vibratorHelper.performHapticFeedback(
+            vibratorHelper.performHapticFeedback(
                     mView,
                     HapticFeedbackConstants.GESTURE_THRESHOLD_ACTIVATE
             )

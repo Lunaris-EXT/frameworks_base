@@ -65,7 +65,7 @@
             android:layout_width="match_parent"
             android:layout_height="4dp"
             android:layout_gravity="center_vertical|center_horizontal"
-            android:background="?androidprv:attr/colorSurfaceVariant"/>
+            android:background="@color/materialColorSurfaceContainerHigh"/>
 
         <ProgressBar
             android:id="@+id/wifi_searching_progress"
@@ -313,11 +313,11 @@
                     <FrameLayout
                         android:layout_width="@dimen/settingslib_switch_track_width"
                         android:layout_height="48dp"
-                        android:layout_marginTop="10dp"
-                        android:layout_marginBottom="10dp">
+                        android:layout_gravity="end|center_vertical">
                         <com.google.android.material.materialswitch.MaterialSwitch
-                            android:id="@+id/hotspot_toggle"
-                            android:contentDescription="@string/quick_settings_hotspot_label"
+                            android:id="@+id/mobile_toggle"
+                            android:contentDescription="@string/mobile_data_settings_title"
+                            android:switchMinWidth="@dimen/settingslib_switch_track_width"
                             android:layout_gravity="center"
                             android:layout_width="wrap_content"
                             android:layout_height="match_parent"
@@ -503,7 +503,7 @@
                         android:src="@drawable/ic_info_outline"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:tint="?android:attr/textColorTertiary"/>
+                        android:tint="@color/materialColorOutline"/>
                 </LinearLayout>
 
                 <LinearLayout
@@ -516,7 +516,8 @@
                         android:layout_height="wrap_content"
                         android:paddingTop="16dp"
                         android:paddingBottom="8dp"
-                        android:textColor="?android:attr/textColorSecondary"
+                        android:fontFamily="@*android:string/config_bodyFontFamily"
+                        android:textColor="@color/materialColorOnSurfaceVariant"
                         android:clickable="true"/>
                 </LinearLayout>
             </LinearLayout>

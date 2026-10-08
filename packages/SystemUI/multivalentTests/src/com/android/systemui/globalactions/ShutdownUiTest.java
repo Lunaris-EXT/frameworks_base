@@ -25,6 +25,7 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.app.Dialog;
 import android.content.res.Resources;
 import android.nearby.NearbyManager;
 import android.net.platform.flags.Flags;
@@ -62,15 +63,15 @@ public class ShutdownUiTest extends SysuiTestCase {
 
     @Test
     public void getRebootMessage_update() {
-        int messageId = mShutdownUi.getRebootMessage(true, PowerManager.REBOOT_RECOVERY_UPDATE,
-                false);
+        int messageId = mShutdownUi.getRebootMessage(
+                true, PowerManager.REBOOT_RECOVERY_UPDATE, false);
         assertEquals(messageId, R.string.reboot_to_update_reboot);
     }
 
     @Test
     public void getRebootMessage_rebootDefault() {
         int messageId = mShutdownUi.getRebootMessage(true, "anything-else", false);
-        assertEquals(messageId, R.string.reboot_to_reset_message);
+        assertEquals(messageId, com.android.systemui.res.R.string.global_action_restart_progress);
     }
 
     @Test
@@ -157,12 +158,15 @@ public class ShutdownUiTest extends SysuiTestCase {
         Resources mockResources = spy(mContext.getResources());
         when(mContext.getResources()).thenReturn(mockResources);
 
-        mShutdownUi.showShutdownUi(false, "test", false);
-
-        verify(mockResources).getFloat(
-                eq(com.android.systemui.res.R.dimen.shutdown_scrim_behind_alpha));
-        verify(mockResources).getColor(
-                eq(com.android.systemui.res.R.color.global_actions_shutdown_ui_text),
-                any());
+        Dialog dialog = mShutdownUi.showShutdownUi(false, "test", false);
+        try {
+            verify(mockResources).getFloat(
+                    eq(com.android.systemui.res.R.dimen.shutdown_scrim_behind_alpha));
+            verify(mockResources).getColor(
+                    eq(com.android.systemui.res.R.color.global_actions_shutdown_ui_text),
+                    any());
+        } finally {
+            dialog.dismiss();
+        }
     }
 }

@@ -80,10 +80,6 @@ constructor(
     private val axDynamicBarSettings: com.android.systemui.axdynamicbar.domain.AxDynamicBarSettings,
 ) : VisualInterruptionDecisionProvider {
 
-    init {
-        check(!VisualInterruptionRefactor.isUnexpectedlyInLegacyMode())
-    }
-
     interface Loggable {
         val uiEventId: UiEventEnum?
         val eventLogData: EventLogData?

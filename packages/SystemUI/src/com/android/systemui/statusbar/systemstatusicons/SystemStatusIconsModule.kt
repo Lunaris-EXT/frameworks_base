@@ -17,6 +17,10 @@
 package com.android.systemui.statusbar.systemstatusicons
 
 import com.android.systemui.dagger.SysUISingleton
+import com.android.systemui.dagger.qualifiers.Application
+import com.android.systemui.statusbar.systemstatusicons.ui.viewmodel.SystemStatusIconsViewModel
+import com.android.systemui.statusbar.systemstatusicons.ui.viewmodel.SystemStatusIconsViewModelImpl
+import dagger.Binds
 import dagger.Module
 import dagger.Provides
 import javax.inject.Qualifier
@@ -35,25 +39,26 @@ annotation class SystemStatusOrderedIconSlotNames
 annotation class SystemStatusIconSlotNamesFlow
 
 @Module
-object SystemStatusIconsModule {
+interface SystemStatusIconsModule {
 
-    /**
-     * Provides the ordered list of status bar icon slot names read from the `config_statusBarIcons`
-     * resource array.
-     */
-    @Provides
+    @Binds
     @SysUISingleton
-    @SystemStatusOrderedIconSlotNames
-    fun provideSystemStatusOrderedIconSlotNames(
-        repository: StatusBarIconOrderRepository,
-    ): Array<String> = repository.getCurrentIconSlotNames()
+    fun bindSystemStatusIconsViewModelFactory(
+        impl: SystemStatusIconsViewModelImpl.Factory
+    ): SystemStatusIconsViewModel.Factory
 
-    /**
-     */
-    @Provides
-    @SysUISingleton
-    @SystemStatusIconSlotNamesFlow
-    fun provideSystemStatusIconSlotNamesFlow(
-        repository: StatusBarIconOrderRepository,
-    ): StateFlow<Array<String>> = repository.iconSlotNamesFlow
+    companion object {
+        /**
+         * Provides the ordered list of status bar icon slot names read from the
+         * `config_statusBarIcons` resource array.
+         */
+        @Provides
+        @SysUISingleton
+        @SystemStatusOrderedIconSlotNames
+        fun provideSystemStatusOrderedIconSlotNames(@Application context: Context): Array<String> {
+            return context.resources.getStringArray(
+                com.android.internal.R.array.config_statusBarIcons
+            )
+        }
+    }
 }

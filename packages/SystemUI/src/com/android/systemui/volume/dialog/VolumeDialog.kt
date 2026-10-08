@@ -35,22 +35,72 @@ import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.res.R
 import com.android.systemui.volume.Events
 import com.android.systemui.volume.dialog.dagger.factory.VolumeDialogComponentFactory
-import com.android.systemui.volume.dialog.domain.interactor.DesktopAudioTileDetailsFeatureInteractor
 import com.android.systemui.volume.dialog.domain.interactor.VolumeDialogVisibilityInteractor
-import javax.inject.Inject
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
 import kotlinx.coroutines.awaitCancellation
 import lineageos.providers.LineageSettings
 
 class VolumeDialog
-@Inject
+@AssistedInject
 constructor(
     @Application context: Context,
     private val componentFactory: VolumeDialogComponentFactory,
     private val visibilityInteractor: VolumeDialogVisibilityInteractor,
-    desktopAudioTileDetailsFeatureInteractor: DesktopAudioTileDetailsFeatureInteractor,
+    @Assisted private val isVolumeDialogVertical: Boolean,
 ) : ComponentDialog(context, R.style.Theme_SystemUI_Dialog_Volume) {
-    // Use horizontal volume dialog if the audio tile details view is enabled
-    private val isVolumeDialogVertical = !desktopAudioTileDetailsFeatureInteractor.isEnabled()
+
+    @AssistedFactory
+    interface Factory {
+        fun create(isVolumeDialogVertical: Boolean): VolumeDialog
+    }
+
+    private var volumePanelOnLeft: Boolean = false
+
+    private val volumePanelOnLeftObserver =
+        object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                val onLeft =
+                    LineageSettings.Secure.getIntForUser(
+                        context.contentResolver,
+                        LineageSettings.Secure.VOLUME_PANEL_ON_LEFT,
+                        0,
+                        UserHandle.USER_CURRENT
+                    ) != 0
+
+                if (volumePanelOnLeft != onLeft) {
+                    volumePanelOnLeft = onLeft
+                    applyLayoutAndGravity()
+                }
+            }
+        }
+
+    private fun applyLayoutAndGravity() {
+        val win = window ?: return
+        val side = if (volumePanelOnLeft) Gravity.LEFT else Gravity.RIGHT
+        val dialogView = win.decorView
+
+        dialogView.layoutDirection =
+            if (volumePanelOnLeft)
+                View.LAYOUT_DIRECTION_RTL
+            else
+                View.LAYOUT_DIRECTION_LTR
+
+        if (isVolumeDialogVertical) {
+            win.setLayout(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+            win.setGravity(side)
+        } else {
+            win.setLayout(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+            win.setGravity(Gravity.TOP or side)
+        }
+    }
 
     private var volumePanelOnLeft: Boolean = false
 

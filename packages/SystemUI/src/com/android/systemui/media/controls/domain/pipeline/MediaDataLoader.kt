@@ -16,6 +16,7 @@
 
 package com.android.systemui.media.controls.domain.pipeline
 
+import android.annotation.UserIdInt
 import android.annotation.WorkerThread
 import android.app.Notification
 import android.app.Notification.EXTRA_SUBSTITUTE_APP_NAME
@@ -51,6 +52,7 @@ import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.graphics.ImageLoader
 import com.android.systemui.media.NotificationMediaManager.isPlayingState
+import com.android.systemui.media.controls.shared.MediaLogger
 import com.android.systemui.media.controls.shared.model.MediaAction
 import com.android.systemui.media.controls.shared.model.MediaButton
 import com.android.systemui.media.controls.shared.model.MediaData
@@ -64,6 +66,7 @@ import com.android.systemui.statusbar.notification.row.HybridGroupManager
 import com.android.systemui.util.kotlin.logD
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -86,6 +89,7 @@ constructor(
     private val imageLoader: ImageLoader,
     private val statusBarManager: StatusBarManager,
     private val media3ActionFactory: Media3ActionFactory,
+    private val mediaLogger: MediaLogger,
 ) {
     private val mediaProcessingJobs = ConcurrentHashMap<String, Job>()
 
@@ -136,7 +140,12 @@ constructor(
         }
         logD(TAG) { "Loading media data for $key... / existing job: $existingJob" }
 
-        return loadMediaJob.await()
+        return try {
+            loadMediaJob.await()
+        } catch (exception: CancellationException) {
+            mediaLogger.logLoadingMediaDataCanceled(key)
+            null
+        }
     }
 
     /** Loads media data, should be called from [backgroundScope]. */
@@ -195,11 +204,12 @@ constructor(
                 }
             }
 
+            mediaLogger.logMediaNotificationEnteredPipeline(sbn.packageName, song)
             // Don't attempt to load bitmaps if the job was cancelled.
             coroutineContext.ensureActive()
 
             // Album art
-            var artworkBitmap = metadata?.let { loadBitmapFromUri(it) }
+            var artworkBitmap = metadata?.let { loadBitmapFromUri(it, sbn.user) }
             if (artworkBitmap == null) {
                 artworkBitmap = metadata?.getBitmap(MediaMetadata.METADATA_KEY_ART)
             }
@@ -278,7 +288,7 @@ constructor(
      * Returns a [MediaDataLoaderResult] if loaded data or `null` if loading failed.
      */
     suspend fun loadMediaDataForResumption(
-        userId: Int,
+        @UserIdInt userId: Int,
         desc: MediaDescription,
         resumeAction: Runnable,
         currentEntry: MediaData?,
@@ -306,7 +316,7 @@ constructor(
     /** Loads media data for resumption, should be called from [backgroundScope]. */
     @WorkerThread
     private suspend fun loadMediaDataForResumptionInBackground(
-        userId: Int,
+        @UserIdInt userId: Int,
         desc: MediaDescription,
         resumeAction: Runnable,
         currentEntry: MediaData?,
@@ -329,7 +339,7 @@ constructor(
             var artworkBitmap = desc.iconBitmap
             if (artworkBitmap == null && desc.iconUri != null) {
                 artworkBitmap =
-                    loadBitmapFromUriForUser(desc.iconUri!!, userId, appUid, packageName)
+                    loadBitmapFromUriChecked(desc.iconUri!!, userId, appUid, packageName)
             }
             val artworkIcon =
                 if (artworkBitmap != null) {
@@ -380,7 +390,7 @@ constructor(
                 controller.sessionToken,
             )
         }
-        return createActionsFromState(context, packageName, controller)
+        return createActionsFromState(context, packageName, controller, user.identifier)
     }
 
     private fun getPlaybackLocation(sbn: StatusBarNotification, mediaController: MediaController) =
@@ -436,13 +446,12 @@ constructor(
     }
 
     /** Load a bitmap from the various Art metadata URIs */
-    private suspend fun loadBitmapFromUri(metadata: MediaMetadata): Bitmap? {
+    private suspend fun loadBitmapFromUri(metadata: MediaMetadata, user: UserHandle): Bitmap? {
         for (uri in ART_URIS) {
             val uriString = metadata.getString(uri)
             if (!TextUtils.isEmpty(uriString)) {
-                val albumArt = loadBitmapFromUri(Uri.parse(uriString))
-                // If we got cancelled during slow album art load, cancel the rest of
-                // the process.
+                val albumArt = loadBitmapFromUriAsUser(Uri.parse(uriString), user)
+                // If we got cancelled during slow album art load, cancel the rest of the process.
                 coroutineContext.ensureActive()
                 if (albumArt != null) {
                     if (Log.isLoggable(TAG, Log.DEBUG)) {
@@ -455,7 +464,7 @@ constructor(
         return null
     }
 
-    private suspend fun loadBitmapFromUri(uri: Uri): Bitmap? {
+    private suspend fun loadBitmapFromUriAsUser(uri: Uri, user: UserHandle): Bitmap? {
         // ImageDecoder requires a scheme of the following types
         if (
             uri.scheme !in
@@ -469,7 +478,13 @@ constructor(
             return null
         }
 
-        val source = ImageLoader.Uri(uri)
+        val userContext =
+            if (context.userId == user.identifier) {
+                context
+            } else {
+                context.createContextAsUser(user, 0)
+            }
+        val source = ImageLoader.Uri(uri, userContext)
         return imageLoader.loadBitmap(
             source,
             artworkWidth,
@@ -478,9 +493,9 @@ constructor(
         )
     }
 
-    private suspend fun loadBitmapFromUriForUser(
+    private suspend fun loadBitmapFromUriChecked(
         uri: Uri,
-        userId: Int,
+        @UserIdInt userId: Int,
         appUid: Int,
         packageName: String,
     ): Bitmap? {
@@ -493,7 +508,7 @@ constructor(
                 Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 ContentProvider.getUserIdFromUri(uri, userId),
             )
-            return loadBitmapFromUri(uri)
+            return loadBitmapFromUriAsUser(uri, UserHandle.of(userId))
         } catch (e: SecurityException) {
             Log.e(TAG, "Failed to get URI permission: $e")
         }

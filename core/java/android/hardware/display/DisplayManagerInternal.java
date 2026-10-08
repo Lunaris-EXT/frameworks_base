@@ -28,6 +28,7 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import android.util.IntArray;
 import android.util.SparseArray;
+import android.util.SparseIntArray;
 import android.view.Display;
 import android.view.DisplayInfo;
 import android.view.Surface;
@@ -165,6 +166,14 @@ public abstract class DisplayManagerInternal {
     public abstract DisplayInfo getDisplayInfo(int displayId);
 
     /**
+     * Returns information about all the logical displays. In case there is an ongoing mode update
+     * process it returns the cached info for that display.
+     *
+     * @return a map with displayId as key and DisplayInfo as value.
+     */
+    public abstract DisplayInfos getNonOverrideDisplayInfos();
+
+    /**
      * Returns a set of DisplayInfo, for the states that may be assumed by either the given display,
      * or any other display within that display's group.
      *
@@ -292,6 +301,14 @@ public abstract class DisplayManagerInternal {
      * {@code false} to use the default scaling behavior of the logical display.
      */
     public abstract void setDisplayScalingDisabled(int displayId, boolean disableScaling);
+
+    /**
+     * Sets whether the display should be optimized for power.
+     *
+     * @param displayId The logical display id.
+     * @param enabled {@code true} to enable power optimization, {@code false} otherwise.
+     */
+    public abstract void setPowerOptimization(int displayId, boolean enabled);
 
     /**
      * Provide a list of UIDs that are present on the display and are allowed to access it.
@@ -501,9 +518,14 @@ public abstract class DisplayManagerInternal {
     public abstract SparseArray<int[]> getDisplayIdsByGroupsIds();
 
     /**
+     * Get the mapping of display ids to the group ids to which they belong.
+     */
+    public abstract SparseIntArray getGroupIdsByDisplayIds();
+
+    /**
      * Get all available display ids.
      */
-    public abstract IntArray getDisplayIds();
+    public abstract int[] getDisplayIds(boolean includeDisabled);
 
     // LMOFreeform
     public abstract void createFreeformLocked(String name, ILMOFreeformDisplayCallback callback,
@@ -904,9 +926,20 @@ public abstract class DisplayManagerInternal {
 
     /** The callbacks that controls the entry & exit of display offloading. */
     public interface DisplayOffloader {
-        boolean startOffload();
+        /**
+         * Start display offload.
+         *
+         * @param displayState display state at time of the start request.
+         * @return {@code true} on success, {@code false} otherwise.
+         */
+        boolean startOffload(@Display.DisplayState int displayState);
 
-        void stopOffload();
+        /**
+         * Stop display offload.
+         *
+         * @param displayState display state at time of the stop request.
+         */
+        void stopOffload(@Display.DisplayState int displayState);
 
         /**
          * Called when {@link DisplayOffloadSession} tries to block screen turning on.
@@ -993,4 +1026,5 @@ public abstract class DisplayManagerInternal {
             return Display.isSuspendedState(displayState);
         }
     }
+    public record DisplayInfos(SparseArray<DisplayInfo> displayInfos) {}
 }

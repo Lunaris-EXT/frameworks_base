@@ -18,7 +18,6 @@ package com.android.systemui.keyguard.ui.binder
 
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
-import android.annotation.DrawableRes
 import android.annotation.SuppressLint
 import android.content.Context;
 import android.graphics.Point
@@ -41,9 +40,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import com.android.app.tracing.coroutines.launchTraced as launch
 import com.android.keyguard.AuthInteractionProperties
 import com.android.systemui.Flags
-import com.android.systemui.common.shared.model.Icon
-import com.android.systemui.common.shared.model.Text
-import com.android.systemui.common.shared.model.TintedIcon
+import com.android.systemui.Flags.msdlFeedback
 import com.android.systemui.common.ui.ConfigurationState
 import com.android.systemui.common.ui.view.onApplyWindowInsets
 import com.android.systemui.common.ui.view.onLayoutChanged
@@ -56,7 +53,6 @@ import com.android.systemui.keyguard.ui.viewmodel.BurnInParameters
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardBlueprintViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardRootViewModel
 import com.android.systemui.keyguard.ui.viewmodel.KeyguardSmartspaceViewModel
-import com.android.systemui.keyguard.ui.viewmodel.OccludingAppDeviceEntryMessageViewModel
 import com.android.systemui.keyguard.ui.viewmodel.TransitionData
 import com.android.systemui.keyguard.ui.viewmodel.ViewStateAccessor
 import com.android.systemui.lifecycle.repeatWhenAttached
@@ -72,9 +68,6 @@ import com.android.systemui.shared.R as sharedR
 import com.android.systemui.statusbar.CrossFadeHelper
 import com.android.systemui.statusbar.VibratorHelper
 import com.android.systemui.statusbar.phone.StatusBarKeyguardViewManager
-import com.android.systemui.temporarydisplay.ViewPriority
-import com.android.systemui.temporarydisplay.chipbar.ChipbarCoordinator
-import com.android.systemui.temporarydisplay.chipbar.ChipbarInfo
 import com.android.systemui.util.kotlin.DisposableHandles
 import com.android.systemui.util.ui.AnimatedValue
 import com.android.systemui.util.ui.isAnimating
@@ -89,7 +82,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 
-/** Bind occludingAppDeviceEntryMessageViewModel to run whenever the keyguard view is attached. */
+/** Bind keyguard UI to run whenever the keyguard view is attached. */
 object KeyguardRootViewBinder {
     @SuppressLint("ClickableViewAccessibility")
     @JvmStatic
@@ -98,9 +91,6 @@ object KeyguardRootViewBinder {
         viewModel: KeyguardRootViewModel,
         blueprintViewModel: KeyguardBlueprintViewModel,
         configuration: ConfigurationState,
-        context: Context,
-        occludingAppDeviceEntryMessageViewModel: OccludingAppDeviceEntryMessageViewModel?,
-        chipbarCoordinator: ChipbarCoordinator?,
         shadeInteractor: ShadeInteractor,
         smartspaceViewModel: KeyguardSmartspaceViewModel,
         deviceEntryHapticsInteractor: DeviceEntryHapticsInteractor?,
@@ -197,17 +187,14 @@ object KeyguardRootViewBinder {
                             view.alpha = alpha
                             childViews[burnInLayerId]?.alpha = alpha
                             childViews[sliceViewId]?.alpha = alpha
-                            childViews[weatherAreaId]?.alpha = alpha
                         }
                     }
 
-                    if (Flags.newDozingKeyguardStates()) {
-                        launch("$TAG#nonAuthUIAlpha") {
-                            viewModel.nonAuthUIAlpha.collect { alpha ->
-                                for (childView in childViews) {
-                                    if (!authUiIds.contains(childView.key)) {
-                                        childView.value.alpha = alpha
-                                    }
+                    launch("$TAG#nonAuthUIAlpha") {
+                        viewModel.nonAuthUIAlpha.collect { alpha ->
+                            for (childView in childViews) {
+                                if (!authUiIds.contains(childView.key)) {
+                                    childView.value.alpha = alpha
                                 }
                             }
                         }
@@ -227,11 +214,8 @@ object KeyguardRootViewBinder {
                         viewModel.translationY.collect { y ->
                             childViews[burnInLayerId]?.translationY = y
                             childViews[sliceViewId]?.translationY = y
-                            childViews[weatherAreaId]?.translationY = y
                             childViews[largeClockId]?.translationY = y
-                            if (com.android.systemui.shared.Flags.clockReactiveSmartspaceLayout()) {
-                                childViews[largeClockDateId]?.translationY = y
-                            }
+                            childViews[largeClockDateId]?.translationY = y
                             childViews[aodPromotedNotificationId]?.translationY = y
                             childViews[aodNotificationIconContainerId]?.translationY = y
                         }
@@ -245,7 +229,6 @@ object KeyguardRootViewBinder {
                                     // Large Clock is not translated in the x direction
                                     childViews[burnInLayerId]?.translationX = px
                                     childViews[sliceViewId]?.translationX = px
-                                    childViews[weatherAreaId]?.translationX = px
                                     childViews[aodPromotedNotificationId]?.translationX = px
                                     childViews[aodNotificationIconContainerId]?.translationX = px
                                 }
@@ -278,24 +261,11 @@ object KeyguardRootViewBinder {
                             force = true,
                         )
                     }
-                    launch {
-                        occludingAppDeviceEntryMessageViewModel?.message?.collect { biometricMessage
-                            ->
-                            if (biometricMessage?.message != null) {
-                                chipbarCoordinator!!.displayView(
-                                    createChipbarInfo(biometricMessage.message, R.drawable.ic_lock)
-                                )
-                            } else {
-                                chipbarCoordinator!!.removeView(ID, "occludingAppMsgNull")
-                            }
-                        }
-                    }
 
                     launch {
                         viewModel.burnInLayerVisibility.collect { visibility ->
                             childViews[burnInLayerId]?.visibility = visibility
                             childViews[sliceViewId]?.visibility = visibility
-                            childViews[weatherAreaId]?.visibility = visibility
                         }
                     }
 
@@ -421,36 +391,14 @@ object KeyguardRootViewBinder {
         disposables +=
             view.onApplyWindowInsets { _: View, insets: WindowInsets ->
                 val insetTypes = WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
-                burnInParams.update { current ->
-                    current.copy(topInset = insets.getInsetsIgnoringVisibility(insetTypes).top)
+                val insetAmount = insets.getInsetsIgnoringVisibility(insetTypes).top
+                if (burnInParams.value.topInset() != insetAmount) {
+                    burnInParams.update { current -> current.copy(topInset = { insetAmount }) }
                 }
                 insets
             }
 
         return disposables
-    }
-
-    private fun isFpHapticEnabled(context: Context, key: String): Boolean {
-        return Settings.System.getIntForUser(
-            context.contentResolver, key, 1, UserHandle.USER_CURRENT) == 1
-    }
-
-    /**
-     * Creates an instance of [ChipbarInfo] that can be sent to [ChipbarCoordinator] for display.
-     */
-    private fun createChipbarInfo(message: String, @DrawableRes icon: Int): ChipbarInfo {
-        return ChipbarInfo(
-            startIcon = TintedIcon(Icon.Resource(icon, null), ChipbarInfo.DEFAULT_ICON_TINT),
-            text = Text.Loaded(message),
-            endItem = null,
-            vibrationEffect = null,
-            windowTitle = "OccludingAppUnlockMsgChip",
-            wakeReason = "OCCLUDING_APP_UNLOCK_MSG_CHIP",
-            timeoutMs = 3500,
-            id = ID,
-            priority = ViewPriority.CRITICAL,
-            instanceId = null,
-        )
     }
 
     private class OnLayoutChange(
@@ -496,21 +444,19 @@ object KeyguardRootViewBinder {
                 )
             }
 
-            burnInParams.update { current ->
-                current.copy(
-                    minViewY =
-                        // To ensure burn-in doesn't enroach the top inset, get the min top Y
-                        childViews.entries.fold(Int.MAX_VALUE) { currentMin, (viewId, view) ->
-                            min(
-                                currentMin,
-                                if (!isUserVisible(view)) {
-                                    Int.MAX_VALUE
-                                } else {
-                                    view.getTop()
-                                },
-                            )
-                        }
-                )
+            val calculatedMinViewY =
+                childViews.entries.fold(Int.MAX_VALUE) { currentMin, (_, view) ->
+                    min(
+                        currentMin,
+                        if (!isUserVisible(view)) {
+                            Int.MAX_VALUE
+                        } else {
+                            view.top
+                        },
+                    )
+                }
+            if (calculatedMinViewY != burnInParams.value.minViewY()) {
+                burnInParams.update { current -> current.copy(minViewY = { calculatedMinViewY }) }
             }
         }
 
@@ -588,7 +534,6 @@ object KeyguardRootViewBinder {
 
     private val burnInLayerId = R.id.burn_in_layer
     private val sliceViewId = R.id.keyguard_slice_view
-    private val weatherAreaId = R.id.keyguard_weather_area
     private val aodPromotedNotificationId = AodPromotedNotificationSection.viewId
     private val aodNotificationIconContainerId = R.id.aod_notification_icon_container
     private val largeClockId = ClockViewIds.LOCKSCREEN_CLOCK_VIEW_LARGE
@@ -604,7 +549,6 @@ object KeyguardRootViewBinder {
     private val authInteractionProperties = AuthInteractionProperties()
     private val authUiIds = setOf(deviceEntryIcon, indicationArea)
 
-    private const val ID = "occluding_app_device_entry_unlock_msg"
     private const val AOD_ICONS_APPEAR_DURATION: Long = 200
     private const val TAG = "KeyguardRootViewBinder"
 }

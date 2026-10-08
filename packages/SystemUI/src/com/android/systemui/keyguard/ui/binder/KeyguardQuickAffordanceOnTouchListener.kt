@@ -82,15 +82,17 @@ class KeyguardQuickAffordanceOnTouchListener(
                 false
             }
             MotionEvent.ACTION_UP -> {
-                if (isUsingAccurateTool(event) || viewModel.singleTap) {
+                if (falsingManager?.isFalseTap(FalsingManager.NO_PENALTY) == true) {
+                    return false
+                }
+                if (isUsingAccurateTool(event)) {
                     // When using an accurate tool type (stylus, mouse, etc.), we don't require
                     // a long-press gesture to activate the quick affordance. Therefore, lifting
                     // the pointer performs a click.
                     if (
                         viewModel.configKey != null &&
                             event.rawDistanceFrom(downDisplayCoords.x, downDisplayCoords.y) <=
-                                ViewConfiguration.getTouchSlop() &&
-                            falsingManager?.isFalseTap(FalsingManager.NO_PENALTY) == false
+                                ViewConfiguration.getTouchSlop()
                     ) {
                         dispatchClick(viewModel.configKey)
                     }
@@ -112,6 +114,9 @@ class KeyguardQuickAffordanceOnTouchListener(
 
     private fun dispatchClick(configKey: String) {
         view.setOnClickListener {
+            if (falsingManager?.isFalseTap(FalsingManager.LOW_PENALTY) == true) {
+                return@setOnClickListener
+            }
             vibratorHelper?.vibrate(
                 if (viewModel.isActivated) {
                     if (KeyguardBottomAreaVibrations.areAllPrimitivesSupported) {

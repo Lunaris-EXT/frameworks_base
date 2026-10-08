@@ -48,7 +48,6 @@ import com.android.systemui.common.shared.colors.SurfaceEffectColors;
 import com.android.systemui.res.R;
 import com.android.systemui.scene.shared.flag.SceneContainerFlag;
 import com.android.systemui.statusbar.notification.ColorUpdateLogger;
-import com.android.systemui.statusbar.notification.footer.shared.NotifRedesignFooter;
 import com.android.systemui.statusbar.notification.row.FooterViewButton;
 import com.android.systemui.statusbar.notification.row.StackScrollerDecorView;
 import com.android.systemui.statusbar.notification.stack.AnimationProperties;
@@ -61,11 +60,7 @@ import java.io.PrintWriter;
 import java.util.function.Consumer;
 
 public class FooterView extends StackScrollerDecorView {
-    private static final String TAG = "FooterView";
-
     private FooterViewButton mClearAllButton;
-    private FooterViewButton mManageOrHistoryButton;
-    // The settings & history buttons replace the single manage/history button in the redesign
     private FooterViewButton mSettingsButton;
     private FooterViewButton mHistoryButton;
     private boolean mShouldBeHidden;
@@ -76,8 +71,6 @@ public class FooterView extends StackScrollerDecorView {
 
     private @StringRes int mClearAllButtonTextId;
     private @StringRes int mClearAllButtonDescriptionId;
-    private @StringRes int mManageOrHistoryButtonTextId;
-    private @StringRes int mManageOrHistoryButtonDescriptionId;
     private @StringRes int mMessageStringId;
     private @DrawableRes int mMessageIconId;
 
@@ -112,28 +105,13 @@ public class FooterView extends StackScrollerDecorView {
         setClearAllButtonVisible(visible, animate, /* onAnimationEnded = */ null);
     }
 
-    /**
-     * Set the visibility of the "Manage"/"History" button to {@code visible}. This is replaced by
-     * two separate buttons in the redesign.
-     */
-    public void setManageOrHistoryButtonVisible(boolean visible) {
-        NotifRedesignFooter.assertInLegacyMode();
-        mManageOrHistoryButton.setVisibility(visible ? View.VISIBLE : View.GONE);
-    }
-
     /** Set the visibility of the Settings button to {@code visible}. */
     public void setSettingsButtonVisible(boolean visible) {
-        if (NotifRedesignFooter.isUnexpectedlyInLegacyMode()) {
-            return;
-        }
         mSettingsButton.setVisibility(visible ? View.VISIBLE : View.GONE);
     }
 
     /** Set the visibility of the History button to {@code visible}. */
     public void setHistoryButtonVisible(boolean visible) {
-        if (NotifRedesignFooter.isUnexpectedlyInLegacyMode()) {
-            return;
-        }
         mHistoryButton.setVisibility(visible ? View.VISIBLE : View.GONE);
     }
 
@@ -165,14 +143,23 @@ public class FooterView extends StackScrollerDecorView {
         IndentingPrintWriter pw = DumpUtilsKt.asIndenting(pwOriginal);
         super.dump(pw, args);
         DumpUtilsKt.withIncreasedIndent(pw, () -> {
-            // TODO: b/375010573 - update dumps for redesign
             pw.println("visibility: " + DumpUtilsKt.visibilityString(getVisibility()));
-            if (mManageOrHistoryButton != null)
-                pw.println("mManageOrHistoryButton visibility: "
-                        + DumpUtilsKt.visibilityString(mManageOrHistoryButton.getVisibility()));
-            if (mClearAllButton != null)
+            if (mHistoryButton != null) {
+                pw.println("mHistoryButton visibility: "
+                        + DumpUtilsKt.visibilityString(mHistoryButton.getVisibility()));
+            }
+            if (mClearAllButton != null) {
                 pw.println("mClearAllButton visibility: "
                         + DumpUtilsKt.visibilityString(mClearAllButton.getVisibility()));
+            }
+            if (mSettingsButton != null) {
+                pw.println("mSettingsButton visibility: "
+                        + DumpUtilsKt.visibilityString(mSettingsButton.getVisibility()));
+            }
+            if (mSeenNotifsFooterTextView != null) {
+                pw.println("mSeenNotifsFooterTextView visibility: "
+                        + DumpUtilsKt.visibilityString(mSeenNotifsFooterTextView.getVisibility()));
+            }
         });
     }
 
@@ -206,43 +193,6 @@ public class FooterView extends StackScrollerDecorView {
             return; // not initialized yet
         }
         mClearAllButton.setContentDescription(getContext().getString(mClearAllButtonDescriptionId));
-    }
-
-    /** Set the text label for the "Manage"/"History" button. */
-    public void setManageOrHistoryButtonText(@StringRes int textId) {
-        NotifRedesignFooter.assertInLegacyMode();
-        if (mManageOrHistoryButtonTextId == textId) {
-            return; // nothing changed
-        }
-        mManageOrHistoryButtonTextId = textId;
-        updateManageOrHistoryButtonText();
-    }
-
-    private void updateManageOrHistoryButtonText() {
-        NotifRedesignFooter.assertInLegacyMode();
-        if (mManageOrHistoryButtonTextId == 0) {
-            return; // not initialized yet
-        }
-        mManageOrHistoryButton.setText(getContext().getString(mManageOrHistoryButtonTextId));
-    }
-
-    /** Set the accessibility content description for the "Clear all" button. */
-    public void setManageOrHistoryButtonDescription(@StringRes int contentDescriptionId) {
-        NotifRedesignFooter.assertInLegacyMode();
-        if (mManageOrHistoryButtonDescriptionId == contentDescriptionId) {
-            return; // nothing changed
-        }
-        mManageOrHistoryButtonDescriptionId = contentDescriptionId;
-        updateManageOrHistoryButtonDescription();
-    }
-
-    private void updateManageOrHistoryButtonDescription() {
-        NotifRedesignFooter.assertInLegacyMode();
-        if (mManageOrHistoryButtonDescriptionId == 0) {
-            return; // not initialized yet
-        }
-        mManageOrHistoryButton.setContentDescription(
-                getContext().getString(mManageOrHistoryButtonDescriptionId));
     }
 
     /** Set the string for a message to be shown instead of the buttons. */
@@ -294,12 +244,8 @@ public class FooterView extends StackScrollerDecorView {
         }
         super.onFinishInflate();
         mClearAllButton = (FooterViewButton) findSecondaryView();
-        if (NotifRedesignFooter.isEnabled()) {
-            mSettingsButton = findViewById(R.id.settings_button);
-            mHistoryButton = findViewById(R.id.history_button);
-        } else {
-            mManageOrHistoryButton = findViewById(R.id.manage_text);
-        }
+        mSettingsButton = findViewById(R.id.settings_button);
+        mHistoryButton = findViewById(R.id.history_button);
         mSeenNotifsFooterTextView = findViewById(R.id.unlock_prompt_footer);
         updateContent();
         updateColors();
@@ -317,27 +263,12 @@ public class FooterView extends StackScrollerDecorView {
 
     /** Set onClickListener for the notification settings button. */
     public void setSettingsButtonClickListener(OnClickListener listener) {
-        if (NotifRedesignFooter.isUnexpectedlyInLegacyMode()) {
-            return;
-        }
-        mSettingsButton.setOnClickListener(withHaptics(listener));
+        mSettingsButton.setOnClickListener(listener);
     }
 
     /** Set onClickListener for the notification history button. */
     public void setHistoryButtonClickListener(OnClickListener listener) {
-        if (NotifRedesignFooter.isUnexpectedlyInLegacyMode()) {
-            return;
-        }
-        mHistoryButton.setOnClickListener(withHaptics(listener));
-    }
-
-    /**
-     * Set onClickListener for the manage/history button. This is replaced by two separate buttons
-     * in the redesign.
-     */
-    public void setManageButtonClickListener(OnClickListener listener) {
-        NotifRedesignFooter.assertInLegacyMode();
-        mManageOrHistoryButton.setOnClickListener(withHaptics(listener));
+        mHistoryButton.setOnClickListener(listener);
     }
 
     /** Set onClickListener for the clear all (end) button. */
@@ -368,12 +299,6 @@ public class FooterView extends StackScrollerDecorView {
     private void updateContent() {
         updateClearAllButtonText();
         updateClearAllButtonDescription();
-
-        if (!NotifRedesignFooter.isEnabled()) {
-            updateManageOrHistoryButtonText();
-            updateManageOrHistoryButtonDescription();
-        }
-
         updateMessageString();
         updateMessageIcon();
     }
@@ -400,8 +325,7 @@ public class FooterView extends StackScrollerDecorView {
         // button.
         final Drawable clearAllBg = theme.getDrawable(R.drawable.notif_footer_btn_background);
         final Drawable settingsBg = theme.getDrawable(R.drawable.notif_footer_btn_background);
-        final Drawable historyBg = NotifRedesignFooter.isEnabled()
-                ? theme.getDrawable(R.drawable.notif_footer_btn_background) : null;
+        final Drawable historyBg = theme.getDrawable(R.drawable.notif_footer_btn_background);
         final @ColorInt int scHigh;
 
         if (!notificationFooterBackgroundTintOptimization()) {
@@ -429,27 +353,24 @@ public class FooterView extends StackScrollerDecorView {
                 final ColorFilter bgColorFilter = new PorterDuffColorFilter(scHigh, SRC_ATOP);
                 clearAllBg.setColorFilter(bgColorFilter);
                 settingsBg.setColorFilter(bgColorFilter);
-                if (NotifRedesignFooter.isEnabled()) {
-                    historyBg.setColorFilter(bgColorFilter);
-                }
+                historyBg.setColorFilter(bgColorFilter);
             }
         } else {
             scHigh = 0;
         }
+
         mClearAllButton.setBackground(clearAllBg);
         mClearAllButton.setTextColor(onSurface);
-        if (NotifRedesignFooter.isEnabled()) {
-            mSettingsButton.setBackground(settingsBg);
-            mSettingsButton.setCompoundDrawableTintList(ColorStateList.valueOf(onSurface));
 
-            mHistoryButton.setBackground(historyBg);
-            mHistoryButton.setCompoundDrawableTintList(ColorStateList.valueOf(onSurface));
-        } else {
-            mManageOrHistoryButton.setBackground(settingsBg);
-            mManageOrHistoryButton.setTextColor(onSurface);
-        }
+        mSettingsButton.setBackground(settingsBg);
+        mSettingsButton.setCompoundDrawableTintList(ColorStateList.valueOf(onSurface));
+
+        mHistoryButton.setBackground(historyBg);
+        mHistoryButton.setCompoundDrawableTintList(ColorStateList.valueOf(onSurface));
+
         mSeenNotifsFooterTextView.setTextColor(onSurface);
         mSeenNotifsFooterTextView.setCompoundDrawableTintList(ColorStateList.valueOf(onSurface));
+
         ColorUpdateLogger colorUpdateLogger = ColorUpdateLogger.getInstance();
         if (colorUpdateLogger != null) {
             colorUpdateLogger.logEvent("Footer.updateColors()",

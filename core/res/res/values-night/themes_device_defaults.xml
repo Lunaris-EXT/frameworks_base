@@ -105,5 +105,7 @@ easier.
         <item name="colorForeground">@android:color/white</item>
     </style>
 
-    <style name="Theme.DeviceDefault.System" parent="Theme.DeviceDefault.DayNight" />
+    <style name="Theme.DeviceDefault.AutofillDialogExpressiveButton" parent="Theme.DeviceDefault.Panel">
+        <item name="colorPrimary">@color/system_primary_dark</item>
+    </style>
 </resources>

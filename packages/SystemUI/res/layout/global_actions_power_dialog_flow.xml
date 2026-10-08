@@ -13,7 +13,7 @@
      See the License for the specific language governing permissions and
      limitations under the License.
 -->
-<com.android.systemui.globalactions.GlobalActionsBlurConstraintLayout
+<androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/power_actions_container"
@@ -35,4 +35,4 @@
         app:flow_horizontalGap="@dimen/global_actions_lite_padding"
         app:flow_verticalGap="@dimen/global_actions_lite_padding"
         app:flow_horizontalStyle="packed"/>
-</com.android.systemui.globalactions.GlobalActionsBlurConstraintLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -22,8 +22,8 @@ import static android.view.KeyEvent.KEYCODE_UNKNOWN;
 import static android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
 
 import static com.android.hardware.input.Flags.enableCustomizableInputGestures;
-
 import static com.android.hardware.input.Flags.keyEventActivityDetection;
+import static com.android.hardware.input.Flags.keyboardBacklightShortcuts;
 import static com.android.hardware.input.Flags.touchpadVisualizer;
 import static com.android.server.policy.WindowManagerPolicy.ACTION_PASS_TO_USER;
 
@@ -44,6 +44,7 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.PixelFormat;
 import android.graphics.PointF;
+import android.gui.StalledTransactionInfo;
 import android.hardware.SensorPrivacyManager;
 import android.hardware.SensorPrivacyManager.Sensors;
 import android.hardware.SensorPrivacyManagerInternal;
@@ -63,7 +64,14 @@ import android.hardware.input.IKeyGestureHandler;
 import android.hardware.input.IKeyboardBacklightListener;
 import android.hardware.input.IStickyModifierStateListener;
 import android.hardware.input.ITabletModeChangedListener;
-import android.hardware.input.IVirtualInputDevice;
+import android.hardware.input.IVirtualDpad;
+import android.hardware.input.IVirtualGamepad;
+import android.hardware.input.IVirtualKeyboard;
+import android.hardware.input.IVirtualMouse;
+import android.hardware.input.IVirtualNavigationTouchpad;
+import android.hardware.input.IVirtualRotaryEncoder;
+import android.hardware.input.IVirtualStylus;
+import android.hardware.input.IVirtualTouchscreen;
 import android.hardware.input.InputDeviceIdentifier;
 import android.hardware.input.InputGestureData;
 import android.hardware.input.InputManager;
@@ -74,7 +82,9 @@ import android.hardware.input.KeyGlyphMap;
 import android.hardware.input.KeyboardLayout;
 import android.hardware.input.KeyboardLayoutSelectionResult;
 import android.hardware.input.TouchCalibration;
+import android.hardware.input.ViewBehaviorConfig;
 import android.hardware.input.VirtualDpadConfig;
+import android.hardware.input.VirtualGamepadConfig;
 import android.hardware.input.VirtualKeyboardConfig;
 import android.hardware.input.VirtualMouseConfig;
 import android.hardware.input.VirtualNavigationTouchpadConfig;
@@ -126,6 +136,7 @@ import android.view.InputEvent;
 import android.view.InputMonitor;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.PointerIcon;
 import android.view.Surface;
 import android.view.SurfaceControl;
@@ -139,8 +150,8 @@ import android.view.inputmethod.InputMethodSubtype;
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.internal.inputmethod.InputMethodSubtypeHandle;
 import com.android.internal.os.SomeArgs;
+import com.android.internal.os.TimeoutRecord;
 import com.android.internal.policy.IShortcutService;
 import com.android.internal.protolog.ProtoLog;
 import com.android.internal.protolog.ProtoLogGroup;
@@ -152,11 +163,14 @@ import com.android.server.IoThread;
 import com.android.server.LocalServices;
 import com.android.server.SystemService;
 import com.android.server.Watchdog;
+import com.android.server.attention.AttentionManagerService;
+import com.android.server.attention.InteractionProviderInternal;
 import com.android.server.input.InputManagerInternal.LidSwitchCallback;
 import com.android.server.input.data.InputDataStore;
 import com.android.server.input.debug.FocusEventDebugView;
 import com.android.server.input.debug.TouchpadDebugViewController;
 import com.android.server.policy.WindowManagerPolicy;
+import com.android.server.utils.AnrTimer;
 
 import libcore.io.IoUtils;
 
@@ -328,12 +342,10 @@ public class InputManagerService extends IInputManager.Stub
     @GuardedBy("mAssociationsLock")
     private final Set<String> mVirtualDevicePorts = new ArraySet<>();
 
-    // Stores input ports associated with device types. For example, adding an association
-    // {"123", "touchNavigation"} here would mean that a touch device appearing at port "123" would
-    // enumerate as a "touch navigation" device rather than the default "touchpad as a mouse
-    // pointer" device.
+    // Map of input ports to overrides on device configuration (.idc properties).
     @GuardedBy("mAssociationsLock")
-    private final Map<String, String> mDeviceTypeAssociations = new ArrayMap<>();
+    private final Map<String, ConfigurationOverride> mDeviceConfigurationOverrides =
+            new ArrayMap<>();
 
     // Guards per-display input properties and properties relating to the mouse pointer.
     // Threads can wait on this lock to be notified the next time the display on which the mouse
@@ -382,7 +394,10 @@ public class InputManagerService extends IInputManager.Stub
     private final VirtualInputDeviceController mVirtualInputDeviceController;
 
     // Manages Keyboard modifier keys remapping
-    private final KeyRemapper mKeyRemapper;
+    private final ModifierKeyRemapper mModifierKeyRemapper;
+
+    // Manages remapping
+    private final InputDeviceRemapper mInputDeviceRemapper;
 
     // Manages Keyboard glyphs for specific keyboards
     private final KeyboardGlyphManager mKeyboardGlyphManager;
@@ -527,7 +542,7 @@ public class InputManagerService extends IInputManager.Stub
         }
 
         NativeInputManagerService getNativeService(InputManagerService service) {
-            return new NativeInputManagerService.NativeImpl(service, mLooper.getQueue());
+            return new NativeInputManagerService.NativeImpl(service, mLooper.getQueue(), mContext);
         }
 
         void registerLocalService(InputManagerInternal localService) {
@@ -574,8 +589,11 @@ public class InputManagerService extends IInputManager.Stub
         mKeyboardLedController = new KeyboardLedController(mContext, injector.getLooper(),
                 mNative);
         mVirtualInputDeviceController = new VirtualInputDeviceController(
-                mContext.getMainThreadHandler(), this);
-        mKeyRemapper = new KeyRemapper(mContext, mNative, mDataStore, injector.getLooper());
+                mContext, mContext.getMainThreadHandler(), this);
+        mModifierKeyRemapper = new ModifierKeyRemapper(mContext, mNative, mDataStore,
+                injector.getLooper());
+        mInputDeviceRemapper = new InputDeviceRemapper(mContext, mNative, injector.getLooper(),
+                injector.getIoLooper(), mInputDataStore);
         mKeyboardGlyphManager = new KeyboardGlyphManager(mContext, injector.getLooper());
         mPointerIconCache = new PointerIconCache(mContext, mNative);
 
@@ -699,10 +717,18 @@ public class InputManagerService extends IInputManager.Stub
         mSysfsNodeMonitor.systemRunning();
         mKeyboardBacklightController.systemRunning();
         mKeyboardLedController.systemRunning();
-        mKeyRemapper.systemRunning();
+        mModifierKeyRemapper.systemRunning();
+        if (com.android.hardware.input.Flags.controllerRemapping()) {
+            mInputDeviceRemapper.systemRunning();
+        }
         mPointerIconCache.systemRunning();
         mKeyboardGlyphManager.systemRunning();
         mKeyGestureController.systemRunning();
+
+        if (AttentionManagerService.isInteractionProviderServiceEnabled(mContext)) {
+            mNative.setInteractionProviderService(
+                    LocalServices.getService(InteractionProviderInternal.class));
+        }
         initKeyGestures();
     }
 
@@ -719,10 +745,6 @@ public class InputManagerService extends IInputManager.Stub
             vArray[i] = viewports.get(i);
         }
         mNative.setDisplayViewports(vArray);
-
-        // Attempt to update the default pointer display when the viewports change.
-        // Take care to not make calls to window manager while holding internal locks.
-        mNative.setPointerDisplayId(mWindowManagerCallbacks.getPointerDisplayId());
     }
 
     private void setDisplayTopologyInternal(DisplayTopologyGraph topology) {
@@ -864,7 +886,7 @@ public class InputManagerService extends IInputManager.Stub
         synchronized (mInputMonitors) {
             mInputMonitors.put(channel.getToken(),
                     new GestureMonitorSpyWindow(monitorToken, name, displayId, pid, uid, sc,
-                            channel));
+                            channel.getToken()));
         }
         return channel;
     }
@@ -1070,30 +1092,42 @@ public class InputManagerService extends IInputManager.Stub
     }
 
     @NonNull
-    @Override
+    @Override // Binder call
     @EnforcePermission(anyOf = {
             Manifest.permission.INJECT_KEY_EVENTS,
             Manifest.permission.INJECT_EVENTS
     })
-    public IVirtualInputDevice createVirtualKeyboard(@NonNull IBinder token,
+    public IVirtualKeyboard createVirtualKeyboard(@NonNull IBinder token,
             @NonNull VirtualKeyboardConfig config) {
         super.createVirtualKeyboard_enforcePermission();
 
-        int displayId = config.getAssociatedDisplayId();
-        if (displayId != Display.INVALID_DISPLAY && displayId != Display.DEFAULT_DISPLAY) {
-            DisplayInfo displayInfo =
-                    mDisplayManagerInternal.getDisplayInfo(displayId);
-            int callingUid = Binder.getCallingUid();
-            // Explicit display association requires either the caller to own the display or if
-            // it's from the system.
-            if (callingUid != displayInfo.ownerUid && callingUid != Process.SYSTEM_UID
-                    && callingUid != 0) {
-                throw new SecurityException(
-                        "Explicit display association requires caller to own the display");
-            }
-        }
+        checkDisplayAssociationPermission(config.getAssociatedDisplayId(), Binder.getCallingUid());
 
         return createVirtualKeyboardInternal(token, config);
+    }
+
+    @NonNull
+    @Override // Binder call
+    @EnforcePermission(Manifest.permission.INJECT_EVENTS)
+    public IVirtualGamepad createVirtualGamepad(
+            @NonNull IBinder token, @NonNull VirtualGamepadConfig config) {
+        super.createVirtualGamepad_enforcePermission();
+
+        checkDisplayAssociationPermission(config.associatedDisplayId, Binder.getCallingUid());
+
+        return createVirtualGamepadInternal(token, config);
+    }
+
+    @NonNull
+    @Override // Binder call
+    @EnforcePermission(Manifest.permission.INJECT_EVENTS)
+    public IVirtualMouse createVirtualMouse(
+            @NonNull IBinder token, @NonNull VirtualMouseConfig config) {
+        super.createVirtualMouse_enforcePermission();
+
+        checkDisplayAssociationPermission(config.getAssociatedDisplayId(), Binder.getCallingUid());
+
+        return createVirtualMouseInternal(token, config);
     }
 
     @Override // Binder call
@@ -1466,7 +1500,7 @@ public class InputManagerService extends IInputManager.Stub
             @NonNull IBinder toChannelToken, boolean transferEntireGesture) {
         Objects.requireNonNull(fromChannelToken);
         Objects.requireNonNull(toChannelToken);
-        ProtoLog.d(INPUT_STREAM_MODIFIER_LOG, "transferTouchGesture: transferEntireGesture=%s",
+        ProtoLog.d(INPUT_STREAM_MODIFIER_LOG, "transferTouchGesture: transferEntireGesture=%b",
                 transferEntireGesture);
         return mNative.transferTouchGesture(fromChannelToken, toChannelToken,
                 false /* isDragDrop */, transferEntireGesture);
@@ -1928,21 +1962,25 @@ public class InputManagerService extends IInputManager.Stub
         mNative.changeUniqueIdAssociation();
     }
 
-    void setTypeAssociationInternal(@NonNull String inputPort, @NonNull String type) {
+    void setConfigurationOverride(
+            @NonNull String inputPort, @NonNull ConfigurationOverride configurationOverride) {
         Objects.requireNonNull(inputPort);
-        Objects.requireNonNull(type);
+        Objects.requireNonNull(configurationOverride);
         synchronized (mAssociationsLock) {
-            mDeviceTypeAssociations.put(inputPort, type);
+            mDeviceConfigurationOverrides.put(inputPort, configurationOverride);
         }
-        mNative.changeTypeAssociation();
+        mNative.changeConfigurationOverrides();
     }
 
-    void unsetTypeAssociationInternal(@NonNull String inputPort) {
+    void unsetConfigurationOverride(@NonNull String inputPort) {
         Objects.requireNonNull(inputPort);
+        final ConfigurationOverride removed;
         synchronized (mAssociationsLock) {
-            mDeviceTypeAssociations.remove(inputPort);
+            removed = mDeviceConfigurationOverrides.remove(inputPort);
         }
-        mNative.changeTypeAssociation();
+        if (removed != null) {
+            mNative.changeConfigurationOverrides();
+        }
     }
 
     void addKeyboardLayoutAssociation(@NonNull String inputPort,
@@ -1984,14 +2022,41 @@ public class InputManagerService extends IInputManager.Stub
         mNative.changeVirtualDevices();
     }
 
+    /**
+     * Creates a virtual keyboard that is passed via binder to other non-internal processes.
+     * Returns a {@link IVirtualKeyboard} that is safe for client processes to own.
+     */
     @NonNull
-    IVirtualInputDevice createVirtualKeyboardInternal(@NonNull IBinder token,
+    IVirtualKeyboard createVirtualKeyboardInternal(@NonNull IBinder token,
             @NonNull VirtualKeyboardConfig config) {
         return mVirtualInputDeviceController.createKeyboard(config.getInputDeviceName(),
                 config.getVendorId(), config.getProductId(), token,
                 InputManagerService.this.getTargetDisplayIdForInput(
                         config.getAssociatedDisplayId()),
-                config.getLanguageTag(), config.getLayoutType());
+                config.getLanguageTag(), config.getLayoutType(),
+                android.companion.virtualdevice.flags.Flags.virtualInputViewBehavior()
+                        ? config.getViewBehaviorConfigOrDefault(/* defaultValue= */ null) : null);
+    }
+
+    @NonNull
+    IVirtualGamepad createVirtualGamepadInternal(@NonNull IBinder token,
+            @NonNull VirtualGamepadConfig config) {
+        return mVirtualInputDeviceController.createGamepad(config.name,
+                config.vendorId, config.productId, token,
+                InputManagerService.this.getTargetDisplayIdForInput(
+                        config.associatedDisplayId),
+                config.registerTriggerAxes);
+    }
+
+    @NonNull
+    IVirtualMouse createVirtualMouseInternal(@NonNull IBinder token,
+            @NonNull VirtualMouseConfig config) {
+        return mVirtualInputDeviceController.createMouse(config.getInputDeviceName(),
+                config.getVendorId(), config.getProductId(), token,
+                config.getAssociatedDisplayId(),
+                android.companion.virtualdevice.flags.Flags.virtualInputViewBehavior()
+                        ? config.getViewBehaviorConfigOrDefault(/* defaultValue= */ null)
+                        : null);
     }
 
     @Override // Binder call
@@ -2330,6 +2395,9 @@ public class InputManagerService extends IInputManager.Stub
         mKeyboardGlyphManager.dump(ipw);
         mKeyGestureController.dump(ipw);
         mVirtualInputDeviceController.dump(ipw);
+        if (com.android.hardware.input.Flags.controllerRemapping()) {
+            mInputDeviceRemapper.dump(ipw);
+        }
     }
 
     private void dumpAssociations(IndentingPrintWriter pw) {
@@ -2363,11 +2431,11 @@ public class InputManagerService extends IInputManager.Stub
                     pw.println("  uniqueId: " + v);
                 });
             }
-            if (!mDeviceTypeAssociations.isEmpty()) {
-                pw.println("Type Associations:");
-                mDeviceTypeAssociations.forEach((k, v) -> {
+            if (!mDeviceConfigurationOverrides.isEmpty()) {
+                pw.println("Configuration Overrides:");
+                mDeviceConfigurationOverrides.forEach((k, v) -> {
                     pw.print("  port: " + k);
-                    pw.println("  type: " + v);
+                    pw.println("  configuration: " + v);
                 });
             }
         }
@@ -2649,22 +2717,48 @@ public class InputManagerService extends IInputManager.Stub
 
     // Native callback
     @SuppressWarnings("unused")
-    private void notifyDropWindow(IBinder token, float x, float y) {
-        mWindowManagerCallbacks.notifyDropWindow(token, x, y);
+    private void notifyDropWindow(IBinder token, float windowX, float windowY, float displayX,
+            float displayY) {
+        mWindowManagerCallbacks.notifyDropWindow(token, windowX, windowY, displayX, displayY);
     }
 
     // Native callback.
     @SuppressWarnings("unused")
-    private void notifyNoFocusedWindowAnr(InputApplicationHandle inputApplicationHandle) {
-        mWindowManagerCallbacks.notifyNoFocusedWindowAnr(inputApplicationHandle);
+    private void notifyNoFocusedWindowAnr(
+            InputApplicationHandle inputApplicationHandle,
+            int eventId,
+            long eventTimeNs,
+            long timeoutDurationMs) {
+        TimeoutRecord timeoutRecord =
+                TimeoutRecord.forInputDispatchNoFocusedWindow(
+                        timeoutMessage(
+                                OptionalInt.empty(), "Application does not have a focused window"));
+
+        if (android.app.Flags.includeAnrInfo()) {
+            setAnrInfoInTimeoutRecord(timeoutRecord, eventId, eventTimeNs, timeoutDurationMs);
+        }
+        mWindowManagerCallbacks.notifyNoFocusedWindowAnr(inputApplicationHandle, timeoutRecord);
     }
 
     // Native callback
     @SuppressWarnings("unused")
-    private void notifyWindowUnresponsive(IBinder token, int pid, boolean isPidValid,
-            String reason) {
-        mWindowManagerCallbacks.notifyWindowUnresponsive(token,
-                isPidValid ? OptionalInt.of(pid) : OptionalInt.empty(), reason);
+    private void notifyWindowUnresponsive(
+            IBinder token,
+            int pid,
+            boolean isPidValid,
+            String reason,
+            int eventId,
+            long eventTimeNs,
+            long timeoutDurationMs) {
+        OptionalInt optionalPid = isPidValid ? OptionalInt.of(pid) : OptionalInt.empty();
+        TimeoutRecord timeoutRecord =
+                TimeoutRecord.forInputDispatchWindowUnresponsive(
+                        timeoutMessage(optionalPid, reason));
+
+        if (android.app.Flags.includeAnrInfo()) {
+            setAnrInfoInTimeoutRecord(timeoutRecord, eventId, eventTimeNs, timeoutDurationMs);
+        }
+        mWindowManagerCallbacks.notifyWindowUnresponsive(token, optionalPid, timeoutRecord);
     }
 
     // Native callback
@@ -2672,6 +2766,17 @@ public class InputManagerService extends IInputManager.Stub
     private void notifyWindowResponsive(IBinder token, int pid, boolean isPidValid) {
         mWindowManagerCallbacks.notifyWindowResponsive(token,
                 isPidValid ? OptionalInt.of(pid) : OptionalInt.empty());
+    }
+
+    // Native callback
+    @SuppressWarnings("unused")
+    private void notifyPreNoFocusedWindowAnr(
+            InputApplicationHandle inputApplicationHandle,
+            int eventId,
+            long elapsedDurationMs,
+            long timeoutDurationMs) {
+        mWindowManagerCallbacks.notifyPreNoFocusedWindowAnr(
+                inputApplicationHandle, eventId, elapsedDurationMs, timeoutDurationMs);
     }
 
     // Native callback.
@@ -2948,7 +3053,9 @@ public class InputManagerService extends IInputManager.Stub
                 }
                 break;
             case KeyGestureEvent.KEY_GESTURE_TYPE_KEYBOARD_BACKLIGHT_TOGGLE:
-                // TODO(b/367748270): Add functionality to turn keyboard backlight on/off.
+                if (keyboardBacklightShortcuts() && complete) {
+                    mKeyboardBacklightController.toggleKeyboardBacklight(deviceId);
+                }
                 break;
             case KeyGestureEvent.KEY_GESTURE_TYPE_TOGGLE_CAPS_LOCK:
                 if (complete) {
@@ -3121,18 +3228,19 @@ public class InputManagerService extends IInputManager.Stub
     // Native callback
     @SuppressWarnings("unused")
     @VisibleForTesting
-    String[] getDeviceTypeAssociations() {
-        final Map<String, String> associations;
+    Map<String, ConfigurationOverride> getDeviceConfigurationOverrides() {
+        final Map<String, ConfigurationOverride> result = new ArrayMap<>();
         synchronized (mAssociationsLock) {
-            associations = new HashMap<>(mDeviceTypeAssociations);
+            for (Map.Entry<String, ConfigurationOverride> entry :
+                    mDeviceConfigurationOverrides.entrySet()) {
+                result.put(entry.getKey(), new ConfigurationOverride(entry.getValue()));
+            }
         }
-
-        return flatten(associations);
+        return result;
     }
 
     // Native callback
     @SuppressWarnings("unused")
-    @VisibleForTesting
     private String[] getKeyboardLayoutAssociations() {
         final Map<String, String> configs = new ArrayMap<>();
         synchronized (mAssociationsLock) {
@@ -3157,12 +3265,6 @@ public class InputManagerService extends IInputManager.Stub
      */
     public boolean canDispatchToDisplay(int deviceId, int displayId) {
         return mNative.canDispatchToDisplay(deviceId, displayId);
-    }
-
-    // Native callback.
-    @SuppressWarnings("unused")
-    private int getPointerLayer() {
-        return mWindowManagerCallbacks.getPointerLayer();
     }
 
     // Native callback.
@@ -3195,21 +3297,196 @@ public class InputManagerService extends IInputManager.Stub
     @Override // Binder call
     public void remapModifierKey(int fromKey, int toKey) {
         super.remapModifierKey_enforcePermission();
-        mKeyRemapper.remapKey(fromKey, toKey);
+        mModifierKeyRemapper.remapKey(fromKey, toKey);
     }
 
     @EnforcePermission(Manifest.permission.REMAP_MODIFIER_KEYS)
     @Override // Binder call
     public void clearAllModifierKeyRemappings() {
         super.clearAllModifierKeyRemappings_enforcePermission();
-        mKeyRemapper.clearAllKeyRemappings();
+        mModifierKeyRemapper.clearAllKeyRemappings();
     }
 
     @EnforcePermission(Manifest.permission.REMAP_MODIFIER_KEYS)
     @Override // Binder call
     public Map<Integer, Integer> getModifierKeyRemapping() {
         super.getModifierKeyRemapping_enforcePermission();
-        return mKeyRemapper.getKeyRemapping();
+        return mModifierKeyRemapper.getKeyRemapping();
+    }
+
+    @EnforcePermission(Manifest.permission.CONTROLLER_REMAPPING)
+    @Override // Binder call
+    public void remapControllerButton(@UserIdInt int userId,
+            @NonNull InputDeviceIdentifier identifier,
+            @InputManager.ControllerButton int fromButton, int toKeyCode) {
+        super.remapControllerButton_enforcePermission();
+        if (!com.android.hardware.input.Flags.controllerRemapping()) {
+            return;
+        }
+        if (!isControllerButton(fromButton)) {
+            throw new IllegalArgumentException("fromButton " + KeyEvent.keyCodeToString(fromButton)
+                    + " is not a valid controller button");
+        }
+        if (!KeyEvent.isGamepadButton(toKeyCode)) {
+            throw new IllegalArgumentException("toKeyCode " + KeyEvent.keyCodeToString(toKeyCode)
+                    + " is not a valid gamepad button");
+        }
+        mInputDeviceRemapper.remapKey(userId, identifier, fromButton, toKeyCode);
+    }
+
+    @EnforcePermission(Manifest.permission.CONTROLLER_REMAPPING)
+    @Override // Binder call
+    public void removeControllerButtonRemapping(@UserIdInt int userId,
+            @NonNull InputDeviceIdentifier identifier,
+            @InputManager.ControllerButton int fromButton) {
+        super.removeControllerButtonRemapping_enforcePermission();
+        if (!com.android.hardware.input.Flags.controllerRemapping()) {
+            return;
+        }
+        if (!isControllerButton(fromButton)) {
+            throw new IllegalArgumentException("fromButton " + KeyEvent.keyCodeToString(fromButton)
+                    + " is not a valid controller button");
+        }
+        mInputDeviceRemapper.removeKeyRemapping(userId, identifier, fromButton);
+    }
+
+    @EnforcePermission(Manifest.permission.CONTROLLER_REMAPPING)
+    @Override // Binder call
+    public void clearAllControllerButtonRemappings(@UserIdInt int userId,
+            @NonNull InputDeviceIdentifier identifier) {
+        super.clearAllControllerButtonRemappings_enforcePermission();
+        if (!com.android.hardware.input.Flags.controllerRemapping()) {
+            return;
+        }
+        mInputDeviceRemapper.clearAllKeyRemappings(userId, identifier);
+    }
+
+    @EnforcePermission(Manifest.permission.CONTROLLER_REMAPPING)
+    @NonNull
+    @Override // Binder call
+    public Map<Integer, Integer> getControllerButtonRemappings(@UserIdInt int userId,
+            @NonNull InputDeviceIdentifier identifier) {
+        super.getControllerButtonRemappings_enforcePermission();
+        if (!com.android.hardware.input.Flags.controllerRemapping()) {
+            return Map.of();
+        }
+        return mInputDeviceRemapper.getKeyRemappings(userId, identifier);
+    }
+
+    @EnforcePermission(Manifest.permission.CONTROLLER_REMAPPING)
+    @Override // Binder call
+    public void remapControllerButtonToAxis(
+            @UserIdInt int userId,
+            @NonNull InputDeviceIdentifier identifier,
+            @InputManager.ControllerButton int fromButton,
+            @MotionEvent.Axis int toAxis) {
+        super.remapControllerButtonToAxis_enforcePermission();
+        if (!com.android.hardware.input.Flags.controllerRemapping()) {
+            return;
+        }
+        if (!isControllerButton(fromButton)) {
+            throw new IllegalArgumentException(
+                    "fromButton "
+                            + KeyEvent.keyCodeToString(fromButton)
+                            + " is not a valid controller button");
+        }
+        if (!isControllerAxis(toAxis)) {
+            throw new IllegalArgumentException(
+                    "toAxis "
+                            + MotionEvent.axisToString(toAxis)
+                            + " is not a valid controller axis");
+        }
+        mInputDeviceRemapper.remapKeyToAxis(userId, identifier, fromButton, toAxis);
+    }
+
+    @EnforcePermission(Manifest.permission.CONTROLLER_REMAPPING)
+    @Override // Binder call
+    public void removeControllerButtonToAxisRemapping(
+            @UserIdInt int userId,
+            @NonNull InputDeviceIdentifier identifier,
+            @InputManager.ControllerButton int fromButton) {
+        super.removeControllerButtonToAxisRemapping_enforcePermission();
+        if (!com.android.hardware.input.Flags.controllerRemapping()) {
+            return;
+        }
+        if (!isControllerButton(fromButton)) {
+            throw new IllegalArgumentException(
+                    "fromButton "
+                            + KeyEvent.keyCodeToString(fromButton)
+                            + " is not a valid controller button");
+        }
+        mInputDeviceRemapper.removeKeyToAxisRemapping(userId, identifier, fromButton);
+    }
+
+    @EnforcePermission(Manifest.permission.CONTROLLER_REMAPPING)
+    @Override // Binder call
+    public void clearAllControllerButtonToAxisRemappings(
+            @UserIdInt int userId, @NonNull InputDeviceIdentifier identifier) {
+        super.clearAllControllerButtonToAxisRemappings_enforcePermission();
+        if (!com.android.hardware.input.Flags.controllerRemapping()) {
+            return;
+        }
+        mInputDeviceRemapper.clearAllKeyToAxisRemappings(userId, identifier);
+    }
+
+    @EnforcePermission(Manifest.permission.CONTROLLER_REMAPPING)
+    @Override // Binder call
+    public void remapControllerAxis(
+            @UserIdInt int userId,
+            @NonNull InputDeviceIdentifier identifier,
+            @MotionEvent.Axis int fromAxis,
+            @MotionEvent.Axis int toAxis) {
+        super.remapControllerAxis_enforcePermission();
+        if (!com.android.hardware.input.Flags.controllerRemapping()) {
+            return;
+        }
+        if (!isControllerAxis(fromAxis)) {
+            throw new IllegalArgumentException("fromAxis " + MotionEvent.axisToString(fromAxis)
+                    + " is not a valid controller axis");
+        }
+        if (!isControllerAxis(toAxis) && toAxis != MotionEvent.AXIS_DISABLED) {
+            throw new IllegalArgumentException("toAxis " + MotionEvent.axisToString(toAxis)
+                    + " is not a valid controller axis");
+        }
+        mInputDeviceRemapper.remapAxis(userId, identifier, fromAxis, toAxis);
+    }
+
+    @EnforcePermission(Manifest.permission.CONTROLLER_REMAPPING)
+    @Override // Binder call
+    public void removeControllerAxisRemapping(@UserIdInt int userId,
+            @NonNull InputDeviceIdentifier identifier, @MotionEvent.Axis int fromAxis) {
+        super.removeControllerAxisRemapping_enforcePermission();
+        if (!com.android.hardware.input.Flags.controllerRemapping()) {
+            return;
+        }
+        if (!isControllerAxis(fromAxis)) {
+            throw new IllegalArgumentException("fromAxis " + MotionEvent.axisToString(fromAxis)
+                    + " is not a valid controller axis");
+        }
+        mInputDeviceRemapper.removeAxisRemapping(userId, identifier, fromAxis);
+    }
+
+    @EnforcePermission(Manifest.permission.CONTROLLER_REMAPPING)
+    @Override // Binder call
+    public void clearAllControllerAxisRemappings(@UserIdInt int userId,
+            @NonNull InputDeviceIdentifier identifier) {
+        super.clearAllControllerAxisRemappings_enforcePermission();
+        if (!com.android.hardware.input.Flags.controllerRemapping()) {
+            return;
+        }
+        mInputDeviceRemapper.clearAllAxisRemappings(userId, identifier);
+    }
+
+    @EnforcePermission(Manifest.permission.CONTROLLER_REMAPPING)
+    @NonNull
+    @Override // Binder call
+    public Map<Integer, Integer> getControllerAxisRemappings(@UserIdInt int userId,
+            @NonNull InputDeviceIdentifier identifier) {
+        super.getControllerAxisRemappings_enforcePermission();
+        if (!com.android.hardware.input.Flags.controllerRemapping()) {
+            return Map.of();
+        }
+        return mInputDeviceRemapper.getAxisRemappings(userId, identifier);
     }
 
     // Native callback.
@@ -3401,6 +3678,23 @@ public class InputManagerService extends IInputManager.Stub
 
     private void handleCurrentUserChanged(@UserIdInt int userId) {
         mKeyGestureController.setCurrentUserId(userId);
+        if (com.android.hardware.input.Flags.controllerRemapping()) {
+            mInputDeviceRemapper.setCurrentUserId(userId);
+        }
+    }
+
+    private void checkDisplayAssociationPermission(int displayId, int callingUid) {
+        if (displayId != Display.INVALID_DISPLAY && displayId != Display.DEFAULT_DISPLAY) {
+            DisplayInfo displayInfo =
+                    mDisplayManagerInternal.getDisplayInfo(displayId);
+            // Explicit display association requires either the caller to own the display or if
+            // it's from the system.
+            if (callingUid != displayInfo.ownerUid && callingUid != Process.SYSTEM_UID
+                    && callingUid != 0) {
+                throw new SecurityException(
+                        "Explicit display association requires caller to own the display");
+            }
+        }
     }
 
     /**
@@ -3434,17 +3728,20 @@ public class InputManagerService extends IInputManager.Stub
          * Notify the window manager about the focused application that does not have any focused
          * window and is unable to respond to focused input events.
          */
-        void notifyNoFocusedWindowAnr(InputApplicationHandle applicationHandle);
+        void notifyNoFocusedWindowAnr(
+                InputApplicationHandle applicationHandle, @NonNull TimeoutRecord timeoutRecord);
 
         /**
          * Notify the window manager about a window that is unresponsive.
          *
          * @param token the token that can be used to look up the window
          * @param pid the pid of the window owner, if known
-         * @param reason the reason why this connection is unresponsive
+         * @param timeoutRecord a record containing details about the ANR event.
          */
-        void notifyWindowUnresponsive(@NonNull IBinder token, @NonNull OptionalInt pid,
-                @NonNull String reason);
+        void notifyWindowUnresponsive(
+                @NonNull IBinder token,
+                @NonNull OptionalInt pid,
+                @NonNull TimeoutRecord timeoutRecord);
 
         /**
          * Notify the window manager about a window that has become responsive.
@@ -3454,6 +3751,21 @@ public class InputManagerService extends IInputManager.Stub
          */
         void notifyWindowResponsive(@NonNull IBinder token, @NonNull OptionalInt pid);
 
+        /**
+         * Notify the window manager about the focused application that does not have any focused
+         * window and is about to trigger an ANR.
+         * @param inputApplicationHandle The application that is being considered for the ANR.
+         * @param eventId The ID of the input event that could not be dispatched.
+         * @param elapsedDurationMs The time elapsed since the input event was first considered for
+         *     dispatch.
+         * @param timeoutDurationMs The total time after which a "No Focused Window" ANR will be
+         *     declared.
+         */
+        void notifyPreNoFocusedWindowAnr(
+                @NonNull InputApplicationHandle inputApplicationHandle,
+                int eventId,
+                long elapsedDurationMs,
+                long timeoutDurationMs);
         /**
          * This callback is invoked when an event first arrives to InputDispatcher and before it is
          * placed onto InputDispatcher's queue. If this event is intercepted, it will never be
@@ -3488,8 +3800,6 @@ public class InputManagerService extends IInputManager.Stub
          */
         boolean interceptUnhandledKey(KeyEvent event, IBinder token);
 
-        int getPointerLayer();
-
         int getPointerDisplayId();
 
         /**
@@ -3507,8 +3817,17 @@ public class InputManagerService extends IInputManager.Stub
 
         /**
          * Called when the drag over window has changed.
+         *
+         * @param token The token of the window over which drop occurred.
+         * @param windowX The x coordinate of the drag event, relative to the window's surface.
+         * @param windowY The y coordinate of the drag event, relative to the window's surface.
+         * @param rawX The x coordinate of the drag event, relative to the display in which the
+         *             gesture ended (and where the drop window is located, if any).
+         * @param rawY The y coordinate of the drag event, relative to the display in which the
+         *             gesture ended (and where the drop window is located, if any).
          */
-        void notifyDropWindow(IBinder token, float x, float y);
+        void notifyDropWindow(IBinder token, float windowX, float windowY, float rawX,
+                float rawY);
 
         /**
          * Get the {@link SurfaceControl} that should be the parent for the surfaces created for
@@ -3802,6 +4121,56 @@ public class InputManagerService extends IInputManager.Stub
         }
     }
 
+    /**
+     * Represents the overrides to the configuration (.idc properties) for an input device. These
+     * are typically used for virtual input devices which do not have a physical .idc file, and are
+     * ignored otherwise.
+     */
+    static final class ConfigurationOverride {
+        // Specifies the device type. For example, a touch device having type "touchNavigation"
+        // means that it is a touch navigation device rather than the default "touchpad as a mouse
+        // pointer" device.
+        @Nullable
+        private final String mDeviceType;
+        // Specifies the view behavior of the input device, to determine how views should react to
+        // input events generated by this device.
+        @Nullable
+        private final ViewBehaviorConfig mViewBehaviorConfig;
+
+        ConfigurationOverride(@Nullable String deviceType,
+                @Nullable ViewBehaviorConfig viewBehaviorConfig) {
+            mDeviceType = deviceType;
+            mViewBehaviorConfig = viewBehaviorConfig;
+        }
+
+        ConfigurationOverride(@NonNull ConfigurationOverride other) {
+            this(other.mDeviceType, other.mViewBehaviorConfig != null ? new ViewBehaviorConfig(
+                    other.mViewBehaviorConfig) : null);
+        }
+
+        // Native callback.
+        @SuppressWarnings("unused")
+        @VisibleForTesting
+        @Nullable
+        String getDeviceType() {
+            return mDeviceType;
+        }
+
+        // Native callback.
+        @SuppressWarnings("unused")
+        @VisibleForTesting
+        @Nullable
+        ViewBehaviorConfig getViewBehaviorConfig() {
+            return mViewBehaviorConfig;
+        }
+
+        @Override
+        public String toString() {
+            return "Configuration{" + "mDeviceType=" + mDeviceType + ", mViewBehaviorConfig="
+                    + mViewBehaviorConfig + '}';
+        }
+    }
+
     private final class LocalService extends InputManagerInternal {
         @Override
         public void setDisplayViewports(List<DisplayViewport> viewports) {
@@ -3872,13 +4241,13 @@ public class InputManagerService extends IInputManager.Stub
         }
 
         @Override
-        public void registerLidSwitchCallback(LidSwitchCallback callbacks) {
-            registerLidSwitchCallbackInternal(callbacks);
+        public void registerLidSwitchCallback(@NonNull LidSwitchCallback callback) {
+            registerLidSwitchCallbackInternal(callback);
         }
 
         @Override
-        public void unregisterLidSwitchCallback(LidSwitchCallback callbacks) {
-            unregisterLidSwitchCallbackInternal(callbacks);
+        public void unregisterLidSwitchCallback(@NonNull LidSwitchCallback callback) {
+            unregisterLidSwitchCallbackInternal(callback);
         }
 
         @Override
@@ -3893,9 +4262,9 @@ public class InputManagerService extends IInputManager.Stub
 
         @Override
         public void onInputMethodSubtypeChangedForKeyboardLayoutMapping(@UserIdInt int userId,
-                @Nullable InputMethodSubtypeHandle subtypeHandle,
+                @Nullable InputMethodInfo imi,
                 @Nullable InputMethodSubtype subtype) {
-            mKeyboardLayoutManager.onInputMethodSubtypeChanged(userId, subtypeHandle, subtype);
+            mKeyboardLayoutManager.onInputMethodSubtypeChanged(userId, imi, subtype);
         }
 
         @Override
@@ -3915,16 +4284,6 @@ public class InputManagerService extends IInputManager.Stub
         @Override
         public void decrementKeyboardBacklight(int deviceId) {
             mKeyboardBacklightController.decrementKeyboardBacklight(deviceId);
-        }
-
-        @Override
-        public void setTypeAssociation(@NonNull String inputPort, @NonNull String type) {
-            setTypeAssociationInternal(inputPort, type);
-        }
-
-        @Override
-        public void unsetTypeAssociation(@NonNull String inputPort) {
-            unsetTypeAssociationInternal(inputPort);
         }
 
         @Override
@@ -3987,6 +4346,10 @@ public class InputManagerService extends IInputManager.Stub
                 payload.put(BACKUP_CATEGORY_INPUT_GESTURES,
                         mKeyGestureController.getInputGestureBackupPayload(userId));
             }
+            if (com.android.hardware.input.Flags.controllerRemapping()) {
+                payload.put(BACKUP_CATEGORY_INPUT_DEVICE_REMAPPING,
+                        mInputDeviceRemapper.getInputDeviceRemappingBackupPayload(userId));
+            }
             return payload;
         }
 
@@ -3997,6 +4360,10 @@ public class InputManagerService extends IInputManager.Stub
                     BACKUP_CATEGORY_INPUT_GESTURES)) {
                 mKeyGestureController.applyInputGesturesBackupPayload(
                         payload.get(BACKUP_CATEGORY_INPUT_GESTURES), userId);
+            }
+            if (payload.containsKey(BACKUP_CATEGORY_INPUT_DEVICE_REMAPPING)) {
+                mInputDeviceRemapper.applyInputDeviceRemappingBackupPayload(
+                        payload.get(BACKUP_CATEGORY_INPUT_DEVICE_REMAPPING), userId);
             }
         }
 
@@ -4013,80 +4380,100 @@ public class InputManagerService extends IInputManager.Stub
 
         @NonNull
         @Override
-        public IVirtualInputDevice createVirtualKeyboard(@NonNull IBinder token,
+        public IVirtualKeyboard createVirtualKeyboard(@NonNull IBinder token,
                 @NonNull VirtualKeyboardConfig config) {
             return InputManagerService.this.createVirtualKeyboardInternal(token, config);
         }
 
         @NonNull
         @Override
-        public IVirtualInputDevice createVirtualMouse(@NonNull IBinder token,
+        public IVirtualMouse createVirtualMouse(@NonNull IBinder token,
                 @NonNull VirtualMouseConfig config) {
-            return mVirtualInputDeviceController.createMouse(config.getInputDeviceName(),
-                    config.getVendorId(), config.getProductId(), token,
-                    config.getAssociatedDisplayId());
+            return InputManagerService.this.createVirtualMouseInternal(token, config);
         }
 
         @NonNull
         @Override
-        public IVirtualInputDevice createVirtualTouchscreen(@NonNull IBinder token,
+        public IVirtualTouchscreen createVirtualTouchscreen(@NonNull IBinder token,
                 @NonNull VirtualTouchscreenConfig config) {
             return mVirtualInputDeviceController.createTouchscreen(config.getInputDeviceName(),
                     config.getVendorId(), config.getProductId(), token,
-                    config.getAssociatedDisplayId(), config.getHeight(), config.getWidth());
+                    config.getAssociatedDisplayId(), config.getHeight(), config.getWidth(),
+                    android.companion.virtualdevice.flags.Flags.virtualInputViewBehavior()
+                            ? config.getViewBehaviorConfigOrDefault(/* defaultValue= */ null)
+                            : null);
         }
 
         @NonNull
         @Override
-        public IVirtualInputDevice createVirtualNavigationTouchpad(@NonNull IBinder token,
+        public IVirtualNavigationTouchpad createVirtualNavigationTouchpad(@NonNull IBinder token,
                 @NonNull VirtualNavigationTouchpadConfig config) {
             return mVirtualInputDeviceController.createNavigationTouchpad(
                     config.getInputDeviceName(), config.getVendorId(),
                     config.getProductId(), token,
                     InputManagerService.this.getTargetDisplayIdForInput(
                             config.getAssociatedDisplayId()),
-                    config.getHeight(), config.getWidth());
+                    config.getHeight(), config.getWidth(),
+                    android.companion.virtualdevice.flags.Flags.virtualInputViewBehavior()
+                            ? config.getViewBehaviorConfigOrDefault(/* defaultValue= */ null)
+                            : null);
         }
 
         @NonNull
         @Override
-        public IVirtualInputDevice createVirtualDpad(@NonNull IBinder token,
+        public IVirtualDpad createVirtualDpad(@NonNull IBinder token,
                 @NonNull VirtualDpadConfig config) {
             return mVirtualInputDeviceController.createDpad(config.getInputDeviceName(),
                     config.getVendorId(), config.getProductId(), token,
                     InputManagerService.this.getTargetDisplayIdForInput(
-                            config.getAssociatedDisplayId()));
+                            config.getAssociatedDisplayId()),
+                    android.companion.virtualdevice.flags.Flags.virtualInputViewBehavior()
+                            ? config.getViewBehaviorConfigOrDefault(/* defaultValue= */ null)
+                            : null);
         }
 
         @NonNull
         @Override
-        public IVirtualInputDevice createVirtualStylus(@NonNull IBinder token,
+        public IVirtualStylus createVirtualStylus(@NonNull IBinder token,
                 @NonNull VirtualStylusConfig config) {
             return mVirtualInputDeviceController.createStylus(config.getInputDeviceName(),
                     config.getVendorId(), config.getProductId(), token,
-                    config.getAssociatedDisplayId(), config.getHeight(), config.getWidth());
+                    config.getAssociatedDisplayId(), config.getHeight(), config.getWidth(),
+                    android.companion.virtualdevice.flags.Flags.virtualInputViewBehavior()
+                            ? config.getViewBehaviorConfigOrDefault(/* defaultValue= */ null)
+                            : null);
         }
 
         @NonNull
         @Override
-        public IVirtualInputDevice createVirtualRotaryEncoder(
+        public IVirtualRotaryEncoder createVirtualRotaryEncoder(
                 @NonNull IBinder token,
                 @NonNull VirtualRotaryEncoderConfig config) {
             return mVirtualInputDeviceController.createRotaryEncoder(config.getInputDeviceName(),
                     config.getVendorId(), config.getProductId(), token,
                     InputManagerService.this.getTargetDisplayIdForInput(
-                            config.getAssociatedDisplayId()));
+                            config.getAssociatedDisplayId()),
+                    android.companion.virtualdevice.flags.Flags.virtualInputViewBehavior()
+                            ? config.getViewBehaviorConfigOrDefault(/* defaultValue= */ null)
+                            : null);
         }
 
         @Override
         public void closeVirtualInputDevice(IBinder token) {
             mVirtualInputDeviceController.unregisterInputDevice(token);
         }
+
+        @Override
+        public void setForceShowTouchesOnDisplay(int displayId, boolean enabled) {
+            updateAdditionalDisplayInputProperties(displayId,
+                    properties -> properties.forceShowTouches = enabled);
+        }
     }
 
     @Override
     public void onShellCommand(FileDescriptor in, FileDescriptor out, FileDescriptor err,
-            String[] args, ShellCallback callback, ResultReceiver resultReceiver) {
+            @NonNull String[] args, ShellCallback callback,
+            @NonNull ResultReceiver resultReceiver) {
         new InputShellCommand().exec(this, in, out, err, args, callback, resultReceiver);
     }
 
@@ -4094,6 +4481,7 @@ public class InputManagerService extends IInputManager.Stub
 
         static final boolean DEFAULT_POINTER_ICON_VISIBLE = true;
         static final boolean DEFAULT_MOUSE_SCALING_ENABLED = true;
+        static final boolean DEFAULT_FORCE_SHOW_TOUCHES = false;
 
         /**
          * Whether to enable mouse pointer scaling on this display. Note that this only affects
@@ -4106,18 +4494,24 @@ public class InputManagerService extends IInputManager.Stub
         // Whether the pointer icon should be visible or hidden on this display.
         public boolean pointerIconVisible;
 
+        // Whether to show the positions of the touches on the given display, despite the global
+        // setting for "show touches" being turned off.
+        public boolean forceShowTouches;
+
         AdditionalDisplayInputProperties() {
             reset();
         }
 
         public boolean allDefaults() {
             return mouseScalingEnabled == DEFAULT_MOUSE_SCALING_ENABLED
-                    && pointerIconVisible == DEFAULT_POINTER_ICON_VISIBLE;
+                    && pointerIconVisible == DEFAULT_POINTER_ICON_VISIBLE
+                    && forceShowTouches == DEFAULT_FORCE_SHOW_TOUCHES;
         }
 
         public void reset() {
             mouseScalingEnabled = DEFAULT_MOUSE_SCALING_ENABLED;
             pointerIconVisible = DEFAULT_POINTER_ICON_VISIBLE;
+            forceShowTouches = DEFAULT_FORCE_SHOW_TOUCHES;
         }
     }
 
@@ -4132,6 +4526,7 @@ public class InputManagerService extends IInputManager.Stub
             }
             final boolean oldPointerIconVisible = properties.pointerIconVisible;
             final boolean oldMouseScalingEnabled = properties.mouseScalingEnabled;
+            final boolean oldShowTouchesEnabled = properties.forceShowTouches;
             updater.accept(properties);
             if (oldPointerIconVisible != properties.pointerIconVisible) {
                 mNative.setPointerIconVisibility(displayId, properties.pointerIconVisible);
@@ -4139,6 +4534,9 @@ public class InputManagerService extends IInputManager.Stub
             if (oldMouseScalingEnabled != properties.mouseScalingEnabled) {
                 mNative.setMouseScalingEnabled(displayId,
                         properties.mouseScalingEnabled);
+            }
+            if (oldShowTouchesEnabled != properties.forceShowTouches) {
+                mNative.setForceShowTouchesOnDisplay(displayId, properties.forceShowTouches);
             }
             if (properties.allDefaults()) {
                 mAdditionalDisplayInputProperties.remove(displayId);
@@ -4293,9 +4691,84 @@ public class InputManagerService extends IInputManager.Stub
         return mNative.getPhysicalLocationPath(deviceId);
     }
 
+    private boolean isControllerButton(int locationCode) {
+        return switch (locationCode) {
+            case InputManager.ControllerButton.CONTROLLER_BUTTON_A,
+                 InputManager.ControllerButton.CONTROLLER_BUTTON_B,
+                 InputManager.ControllerButton.CONTROLLER_BUTTON_X,
+                 InputManager.ControllerButton.CONTROLLER_BUTTON_Y,
+                 InputManager.ControllerButton.CONTROLLER_BUTTON_L1,
+                 InputManager.ControllerButton.CONTROLLER_BUTTON_R1,
+                 InputManager.ControllerButton.CONTROLLER_BUTTON_L2,
+                 InputManager.ControllerButton.CONTROLLER_BUTTON_R2,
+                 InputManager.ControllerButton.CONTROLLER_BUTTON_SELECT,
+                 InputManager.ControllerButton.CONTROLLER_BUTTON_START,
+                 InputManager.ControllerButton.CONTROLLER_BUTTON_MODE,
+                 InputManager.ControllerButton.CONTROLLER_BUTTON_THUMBSTICK_LEFT,
+                 InputManager.ControllerButton.CONTROLLER_BUTTON_THUMBSTICK_RIGHT -> true;
+            default -> false;
+        };
+    }
+
+    private boolean isControllerAxis(int axis) {
+        return switch (axis) {
+            case MotionEvent.AXIS_X,
+                 MotionEvent.AXIS_Y,
+                 MotionEvent.AXIS_Z,
+                 MotionEvent.AXIS_RZ,
+                 MotionEvent.AXIS_LTRIGGER,
+                 MotionEvent.AXIS_RTRIGGER,
+                 MotionEvent.AXIS_HAT_X,
+                 MotionEvent.AXIS_HAT_Y,
+                 MotionEvent.AXIS_GAS,
+                 MotionEvent.AXIS_BRAKE,
+                 MotionEvent.AXIS_RUDDER,
+                 MotionEvent.AXIS_THROTTLE,
+                 MotionEvent.AXIS_WHEEL,
+                 MotionEvent.AXIS_RX,
+                 MotionEvent.AXIS_RY -> true;
+            default -> false;
+        };
+    }
+
+    private String timeoutMessage(OptionalInt pid, String reason) {
+        String message =
+                (reason == null)
+                        ? "Input dispatching timed out."
+                        : TextUtils.formatSimple("Input dispatching timed out (%s).", reason);
+        if (pid.isEmpty()) {
+            return message;
+        }
+        StalledTransactionInfo stalledTransactionInfo =
+                SurfaceControl.getStalledTransactionInfo(pid.getAsInt());
+        if (stalledTransactionInfo == null) {
+            return message;
+        }
+        return String.format(
+                "%s Buffer processing for the associated surface is stuck due to an "
+                        + "unsignaled fence (window=%s, bufferId=0x%016X, frameNumber=%s). This "
+                        + "potentially indicates a GPU hang.",
+                message,
+                stalledTransactionInfo.layerName,
+                stalledTransactionInfo.bufferId,
+                stalledTransactionInfo.frameNumber);
+    }
+
+    /**
+     * Creates a {@link AnrTimer.ExpiredTimer} object which store information about the ANR
+     * information and attach it to the timeout record to propagate ANR details.
+     */
+    private void setAnrInfoInTimeoutRecord(
+            TimeoutRecord timeoutRecord, int anrId, long eventTimeNs, long timeoutDurationMs) {
+        AnrTimer.ExpiredTimer expiredTimer =
+                new AnrTimer.ExpiredTimer(anrId, eventTimeNs / 1000_000, timeoutDurationMs);
+        timeoutRecord.setExpiredTimer(expiredTimer);
+    }
+
     interface KeyboardBacklightControllerInterface {
         default void incrementKeyboardBacklight(int deviceId) {}
         default void decrementKeyboardBacklight(int deviceId) {}
+        default void toggleKeyboardBacklight(int deviceId) {}
         default void registerKeyboardBacklightListener(IKeyboardBacklightListener l, int pid) {}
         default void unregisterKeyboardBacklightListener(IKeyboardBacklightListener l, int pid) {}
         default void onInteractiveChanged(boolean isInteractive) {}

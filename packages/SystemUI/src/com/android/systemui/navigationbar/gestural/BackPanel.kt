@@ -357,7 +357,11 @@ class BackPanel(context: Context, private val latencyTracker: LatencyTracker) : 
         arrowPath.lineTo(dx, dy)
         arrowPath.moveTo(dx, -dy)
         if (triggerLongSwipe) {
-            arrowPath.addPath(arrowPath, arrowPaint.strokeWidth * 2.0f * -1, 0.0f)
+            val offset = arrowPaint.strokeWidth * 2.0f * -1
+            arrowPath.moveTo(dx + offset, -dy)
+            arrowPath.lineTo(offset, 0f)
+            arrowPath.lineTo(dx + offset, dy)
+            arrowPath.moveTo(dx + offset, -dy)
         }
         return arrowPath
     }
@@ -582,7 +586,7 @@ class BackPanel(context: Context, private val latencyTracker: LatencyTracker) : 
         if (isLeftPanel) {
             canvas.scale(-1f, 1f, dx / 2f, dy / 2f)
         }
-        canvas.drawPath(calculateArrowPathEx(arrowPath, arrowPaint, x = dx, y = dy), arrowPaint)
+        canvas.drawPath(arrowPath, arrowPaint)
         canvas.restore()
 
         if (trackingBackArrowLatency) {

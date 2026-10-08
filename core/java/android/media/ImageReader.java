@@ -540,7 +540,7 @@ public class ImageReader implements AutoCloseable {
      *
      * @return latest frame of image data, or {@code null} if no image data is available.
      * @throws IllegalStateException if too many images are currently acquired
-     * @throws UnsupporteOperationException Until API level 36 if the format of acquired
+     * @throws UnsupportedOperationException Until API level 36 if the format of acquired
      * image is different than format of the ImageReader.
      * (If format is {@link ImageFormat#PRIVATE PRIVATE} or API level is 37 or later,
      * the exception is not thrown and an image is acquired.)
@@ -650,7 +650,7 @@ public class ImageReader implements AutoCloseable {
      *
      * @return a new frame of image data, or {@code null} if no image data is available.
      * @throws IllegalStateException if {@code maxImages} images are currently acquired
-     * @throws UnsupporteOperationException Until API level 36 if the format of acquired
+     * @throws UnsupportedOperationException Until API level 36 if the format of acquired
      * image is different than format of the ImageReader.
      * (If format is {@link ImageFormat#PRIVATE PRIVATE} or API level is 37 or later,
      * the exception is not thrown and an image is acquired.)
@@ -799,7 +799,7 @@ public class ImageReader implements AutoCloseable {
         setOnImageAvailableListener(null, null);
         if (mSurface != null) mSurface.release();
 
-        /**
+        /*
          * Close all outstanding acquired images before closing the ImageReader. It is a good
          * practice to close all the images as soon as it is not used to reduce system instantaneous
          * memory pressure. CopyOnWrite list will use a copy of current list content. For the images
@@ -1379,7 +1379,7 @@ public class ImageReader implements AutoCloseable {
                 mRowStride = rowStride;
                 mPixelStride = pixelStride;
                 mBuffer = buffer;
-                /**
+                /*
                  * Set the byteBuffer order according to host endianness (native
                  * order), otherwise, the byteBuffer order defaults to
                  * ByteOrder.BIG_ENDIAN.
@@ -1487,7 +1487,7 @@ public class ImageReader implements AutoCloseable {
             mRowStride = rowStride;
             mPixelStride = pixelStride;
             mBuffer = buffer;
-            /**
+            /*
              * Set the byteBuffer order according to host endianness (native
              * order), otherwise, the byteBuffer order defaults to
              * ByteOrder.BIG_ENDIAN.

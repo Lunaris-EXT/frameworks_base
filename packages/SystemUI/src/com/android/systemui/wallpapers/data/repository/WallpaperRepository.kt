@@ -37,7 +37,6 @@ import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.res.R as SysUIR
 import com.android.systemui.shade.ShadeDisplayAware
-import com.android.systemui.shared.Flags.ambientAod
 import com.android.systemui.shared.Flags.extendedWallpaperEffects
 import com.android.systemui.user.data.model.SelectedUserModel
 import com.android.systemui.user.data.model.SelectionStatus
@@ -133,7 +132,7 @@ constructor(
             .map {
                 val wallpaperEnabled =
                     secureSettings.getInt(Settings.Secure.DOZE_ALWAYS_ON_WALLPAPER_ENABLED, 0) == 1
-                wallpaperEnabled && configEnabled() && ambientAod()
+                aodEnabled && wallpaperEnabled && configEnabled()
             }
             .flowOn(bgDispatcher)
 

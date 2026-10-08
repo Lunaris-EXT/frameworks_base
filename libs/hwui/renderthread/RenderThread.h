@@ -67,6 +67,7 @@ class VulkanManager;
 class IFrameCallback {
 public:
     virtual void doFrame() = 0;
+    virtual std::chrono::nanoseconds getExpectedDuration() = 0;
 
 protected:
     virtual ~IFrameCallback() {}
@@ -182,6 +183,7 @@ private:
     void drainDisplayEventQueue();
     void dispatchFrameCallbacks();
     void requestVsync();
+    std::chrono::nanoseconds estimateCallbacksExpectedDuration() const;
 
     AChoreographer* mChoreographer;
     VsyncSource* mVsyncSource;

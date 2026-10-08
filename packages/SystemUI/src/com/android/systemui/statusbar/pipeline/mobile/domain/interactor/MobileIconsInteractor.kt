@@ -29,7 +29,6 @@ import com.android.systemui.flags.Flags.FILTER_PROVISIONING_NETWORK_SUBSCRIPTION
 import com.android.systemui.log.table.TableLogBuffer
 import com.android.systemui.log.table.logDiffsForTable
 import com.android.systemui.statusbar.core.NewStatusBarIcons
-import com.android.systemui.statusbar.core.StatusBarRootModernization
 import com.android.systemui.statusbar.pipeline.dagger.MobileSummaryLog
 import com.android.systemui.statusbar.pipeline.mobile.data.model.SubscriptionModel
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.MobileConnectionRepository
@@ -39,6 +38,7 @@ import com.android.systemui.statusbar.pipeline.shared.data.model.ConnectivitySlo
 import com.android.systemui.statusbar.pipeline.shared.data.repository.ConnectivityRepository
 import com.android.systemui.statusbar.policy.data.repository.UserSetupRepository
 import com.android.systemui.util.CarrierConfigTracker
+import com.android.systemui.util.kotlin.mapDirect
 import java.lang.ref.WeakReference
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -53,7 +53,6 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transformLatest
 
@@ -100,6 +99,12 @@ interface MobileIconsInteractor {
      * [MobileIconInteractor] responsible for the active data connection, if any.
      */
     val activeDataIconInteractor: StateFlow<MobileIconInteractor?>
+
+    /**
+     * Flow providing a reference to the Interactor for the default data subId. This represents the
+     * [MobileIconInteractor] responsible for the default data connection, if any.
+     */
+    val defaultDataIconInteractor: StateFlow<MobileIconInteractor?>
 
     /** True if the RAT icon should always be displayed and false otherwise. */
     val alwaysShowDataRatIcon: StateFlow<Boolean>
@@ -188,8 +193,19 @@ constructor(
 
     override val activeDataIconInteractor: StateFlow<MobileIconInteractor?> =
         mobileConnectionsRepo.activeMobileDataSubscriptionId
-            .mapLatest {
+            .mapDirect {
                 if (it != null) {
+                    getMobileConnectionInteractorForSubId(it)
+                } else {
+                    null
+                }
+            }
+            .stateIn(scope, SharingStarted.WhileSubscribed(), null)
+
+    override val defaultDataIconInteractor: StateFlow<MobileIconInteractor?> =
+        mobileConnectionsRepo.defaultDataSubId
+            .mapDirect {
+                if (it != null && it != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
                     getMobileConnectionInteractorForSubId(it)
                 } else {
                     null
@@ -305,27 +321,25 @@ constructor(
 
     override val icons =
         filteredSubscriptions
-            .mapLatest { subs ->
+            .mapDirect { subs ->
                 subs.map { getMobileConnectionInteractorForSubId(it.subscriptionId) }
             }
             .stateIn(scope, SharingStarted.WhileSubscribed(), emptyList())
 
-    override val isStackable: StateFlow<Boolean> =
-    if (NewStatusBarIcons.isEnabled && StatusBarRootModernization.isEnabled) {
-        icons.flatMapLatest { iconsList ->
-            when {
-                iconsList.isEmpty() -> flowOf(false)
-                iconsList.size != 2 -> flowOf(false)
-                else -> {
-                    combine(
-                        iconsList[0].disableStackedMobileIcons,
-                        iconsList[0].signalLevelIcon,
-                        iconsList[1].signalLevelIcon
-                    ) { disableStacking, icon0, icon1 ->
-                        !disableStacking &&
-                        icon0 is SignalIconModel.Cellular &&
-                        icon1 is SignalIconModel.Cellular &&
-                        icon0.numberOfLevels == icon1.numberOfLevels
+    override val isStackable =
+        if (NewStatusBarIcons.isEnabled) {
+            icons.flatMapLatest { icons ->
+                if (icons.isEmpty()) {
+                    flowOf(false)
+                } else {
+                    combine(icons.map { it.signalLevelIcon }) { signalLevelIcons ->
+                        // These are only stackable if:
+                        // - They are cellular
+                        // - There's exactly two
+                        // - They have the same number of levels
+                        signalLevelIcons
+                            .filterIsInstance<SignalIconModel.CellularTypeIconModel.Cellular>()
+                            .let { it.size == 2 && it[0].numberOfLevels == it[1].numberOfLevels }
                     }
                 }
             }
@@ -373,12 +387,12 @@ constructor(
 
     override val alwaysShowDataRatIcon: StateFlow<Boolean> =
         mobileConnectionsRepo.defaultDataSubRatConfig
-            .mapLatest { it.alwaysShowDataRatIcon }
+            .mapDirect { it?.alwaysShowDataRatIcon ?: false }
             .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
     override val alwaysUseCdmaLevel: StateFlow<Boolean> =
         mobileConnectionsRepo.defaultDataSubRatConfig
-            .mapLatest { it.alwaysShowCdmaRssi }
+            .mapDirect { it?.alwaysShowCdmaRssi ?: false }
             .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
     override val isSingleCarrier: StateFlow<Boolean> =

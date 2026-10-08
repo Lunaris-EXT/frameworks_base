@@ -20,7 +20,7 @@ package com.android.systemui.keyguard.ui.binder
 import android.annotation.SuppressLint
 import android.content.res.ColorStateList
 import android.graphics.drawable.Animatable2
-import android.os.VibrationEffect
+import android.graphics.drawable.LayerDrawable
 import android.util.Size
 import android.view.View
 import android.view.ViewGroup
@@ -33,8 +33,9 @@ import androidx.core.view.updateLayoutParams
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.android.app.tracing.coroutines.launchTraced as launch
-import com.android.internal.R as AndroidR
+import com.android.internal.graphics.drawable.BackgroundBlurDrawable
 import com.android.keyguard.logging.KeyguardQuickAffordancesLogger
+import com.android.systemui.Flags.enableLockscreenBlur
 import com.android.systemui.animation.Expandable
 import com.android.systemui.animation.view.LaunchableImageView
 import com.android.systemui.common.shared.model.Icon
@@ -49,6 +50,7 @@ import com.android.systemui.plugins.FalsingManager
 import com.android.systemui.res.R
 import com.android.systemui.statusbar.VibratorHelper
 import com.android.systemui.util.doOnEnd
+import com.android.systemui.window.domain.interactor.WindowRootViewBlurInteractor
 import com.google.android.msdl.domain.MSDLPlayer
 import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
@@ -66,6 +68,7 @@ constructor(
     private val msdlPlayer: MSDLPlayer,
     private val logger: KeyguardQuickAffordancesLogger,
     private val hapticsViewModelFactory: KeyguardQuickAffordanceHapticViewModel.Factory,
+    private val windowRootViewBlurInteractor: WindowRootViewBlurInteractor,
 ) {
 
     private val EXIT_DOZE_BUTTON_REVEAL_ANIMATION_DURATION_MS = 250L
@@ -93,10 +96,22 @@ constructor(
         val button = view as ImageView
         val configurationBasedDimensions = MutableStateFlow(loadFromResources(view))
         val hapticsViewModel = hapticsViewModelFactory.create()
-        var latestViewModel: KeyguardQuickAffordanceViewModel? = null
+        val cornerRadius = view.resources.getDimension(R.dimen.keyguard_affordance_fixed_radius)
+        val blurRadius =
+            view.resources.getDimensionPixelSize(R.dimen.keyguard_shortcuts_blur_radius)
 
         val disposableHandle =
             view.repeatWhenAttached {
+                if (enableLockscreenBlur() && view.background !is LayerDrawable) {
+                    val blurDrawable =
+                        view.viewRootImpl.createBackgroundBlurDrawable().apply {
+                            setCornerRadius(cornerRadius)
+                            setBlurRadius(blurRadius)
+                            setVisible(false, false)
+                        }
+                    val surfaceDrawable = view.background
+                    view.background = LayerDrawable(arrayOf(blurDrawable, surfaceDrawable))
+                }
                 repeatOnLifecycle(Lifecycle.State.STARTED) {
                     launch {
                         viewModel.collect { buttonModel ->
@@ -122,6 +137,18 @@ constructor(
                             }
                         }
                     }
+
+                    if (enableLockscreenBlur()) {
+                        launch {
+                            combine(
+                                windowRootViewBlurInteractor.isBlurCurrentlySupported,
+                                viewModel,
+                                { isSupported, viewModel ->
+                                    updateBackground(viewModel, view, isSupported)
+                                },
+                            )
+                        }
+                    }
                 }
             }
 
@@ -135,6 +162,26 @@ constructor(
                 view.setOnApplyWindowInsetsListener(null)
                 disposableHandle.dispose()
             }
+        }
+    }
+
+    private fun updateBackground(
+        viewModel: KeyguardQuickAffordanceViewModel,
+        view: View,
+        isBlurSupported: Boolean,
+    ) {
+        if (enableLockscreenBlur() && view.background is LayerDrawable) {
+            val blurDrawable =
+                (view.background as LayerDrawable).getDrawable(0) as BackgroundBlurDrawable
+            blurDrawable.setVisible(
+                isBlurSupported && viewModel.isSelected && !viewModel.isActivated,
+                false,
+            )
+            (view.background as LayerDrawable)
+                .getDrawable(1)
+                .setTintList(getBackgroundTintList(viewModel, view, isBlurSupported))
+        } else {
+            view.backgroundTintList = getBackgroundTintList(viewModel, view, isBlurSupported)
         }
     }
 
@@ -180,8 +227,21 @@ constructor(
         }
 
         view.isActivated = viewModel.isActivated
-        view.isSelected = viewModel.isSelected
-        updateButtonColors(view, viewModel)
+        view.drawable.setTint(
+            view.context.getColor(
+                if (viewModel.isActivated) {
+                    com.android.internal.R.color.materialColorOnPrimaryFixed
+                } else {
+                    com.android.internal.R.color.materialColorOnSurface
+                }
+            )
+        )
+        updateBackground(
+            viewModel,
+            view,
+            windowRootViewBlurInteractor.isBlurCurrentlySupported.value,
+        )
+
         view
             .animate()
             .scaleX(if (viewModel.isSelected) SCALE_SELECTED_BUTTON else 1f)
@@ -272,7 +332,34 @@ constructor(
         combine(viewModel.map { it.isDimmed }, alphaFlow) { isDimmed, alpha ->
                 if (isDimmed) DIM_ALPHA else alpha
             }
-            .collect { view.alpha = it }
+            .collect {
+                if (enableLockscreenBlur() && view.background is LayerDrawable) {
+                    (view.background as LayerDrawable).getDrawable(0).alpha = (it * 255).toInt()
+                }
+                view.alpha = it
+            }
+    }
+
+    private fun getBackgroundTintList(
+        viewModel: KeyguardQuickAffordanceViewModel,
+        view: View,
+        isBlurSupported: Boolean,
+    ): ColorStateList? {
+        return if (!viewModel.isSelected) {
+            ColorStateList.valueOf(
+                view.context.getColor(
+                    if (viewModel.isActivated) {
+                        com.android.internal.R.color.materialColorPrimaryFixed
+                    } else if (enableLockscreenBlur() && isBlurSupported) {
+                        com.android.internal.R.color.customColorSurfaceEffect1
+                    } else {
+                        com.android.internal.R.color.materialColorSurfaceContainerHigh
+                    }
+                )
+            )
+        } else {
+            null
+        }
     }
 
     private fun loadFromResources(view: View): ConfigurationBasedDimensions {

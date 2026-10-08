@@ -18,6 +18,7 @@ package com.android.server.input;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.content.Context;
 import android.hardware.display.DisplayTopologyGraph;
 import android.hardware.display.DisplayViewport;
 import android.hardware.input.InputSensorInfo;
@@ -30,6 +31,9 @@ import android.view.InputChannel;
 import android.view.InputEvent;
 import android.view.PointerIcon;
 import android.view.VerifiedInputEvent;
+
+import com.android.server.attention.AttentionManagerService;
+import com.android.server.attention.InteractionProviderInternal;
 
 import java.util.List;
 
@@ -52,6 +56,12 @@ interface NativeInputManagerService {
     int getSwitchState(int deviceId, int sourceMask, int sw);
 
     void setKeyRemapping(int[] fromKeyCodes, int[] toKeyCodes);
+
+    void setKeyRemappingForDevice(int deviceId, int[] fromKeyCodes, int[] toKeyCodes);
+
+    void setKeyToAxisRemappingForDevice(int deviceId, int[] fromKeyCodes, int[] toAxisIds);
+
+    void setAxisRemappingForDevice(int deviceId, int[] fromAxisIds, int[] toAxisIds);
 
     boolean hasKeys(int deviceId, int sourceMask, int[] keyCodes, boolean[] keyExists);
 
@@ -162,7 +172,11 @@ interface NativeInputManagerService {
 
     void setTouchpadsEnabled(boolean enabled);
 
-    void setShowTouches(boolean enabled);
+    void setShowTouchesEnabled(boolean enabled);
+
+    void setForceShowTouchesOnDisplay(int displayId, boolean enabled);
+
+    void setVolumeKeysRotation(int mode);
 
     void setVolumeKeysRotation(int mode);
 
@@ -229,7 +243,7 @@ interface NativeInputManagerService {
 
     void changeUniqueIdAssociation();
 
-    void changeTypeAssociation();
+    void changeConfigurationOverrides();
 
     void changeKeyboardLayoutAssociation();
 
@@ -254,9 +268,6 @@ interface NativeInputManagerService {
     void disableSensor(int deviceId, int sensorType);
 
     void cancelCurrentTouch();
-
-    /** Set the displayId on which the mouse cursor should be shown. */
-    void setPointerDisplayId(int displayId);
 
     /** Get the bluetooth address of an input device if known, otherwise return null. */
     String getBluetoothAddress(int deviceId);
@@ -354,17 +365,22 @@ interface NativeInputManagerService {
     @Nullable
     String getPhysicalLocationPath(int deviceId);
 
+    void setInteractionProviderService(InteractionProviderInternal service);
+
     /** The native implementation of InputManagerService methods. */
     class NativeImpl implements NativeInputManagerService {
         /** Pointer to native input manager service object, used by native code. */
         @SuppressWarnings({"unused", "FieldCanBeLocal"})
         private final long mPtr;
 
-        NativeImpl(InputManagerService service, MessageQueue messageQueue) {
-            mPtr = init(service, messageQueue);
+        NativeImpl(InputManagerService service, MessageQueue messageQueue, Context context) {
+            mPtr = init(service, messageQueue,
+                    AttentionManagerService.isInteractionProviderServiceEnabled(context));
         }
 
-        private native long init(InputManagerService service, MessageQueue messageQueue);
+        private native long init(InputManagerService service,
+                MessageQueue messageQueue,
+                boolean createInteractionReporter);
 
         @Override
         public native void start();
@@ -386,6 +402,18 @@ interface NativeInputManagerService {
 
         @Override
         public native void setKeyRemapping(int[] fromKeyCodes, int[] toKeyCodes);
+
+        @Override
+        public native void setKeyRemappingForDevice(int deviceId, int[] fromKeyCodes,
+                int[] toKeyCodes);
+
+        @Override
+        public native void setKeyToAxisRemappingForDevice(
+                int deviceId, int[] fromKeyCodes, int[] toAxisIds);
+
+        @Override
+        public native void setAxisRemappingForDevice(int deviceId, int[] fromAxisIds,
+                int[] toAxisIds);
 
         @Override
         public native boolean hasKeys(int deviceId, int sourceMask, int[] keyCodes,
@@ -510,7 +538,13 @@ interface NativeInputManagerService {
         public native void setTouchpadsEnabled(boolean enabled);
 
         @Override
-        public native void setShowTouches(boolean enabled);
+        public native void setShowTouchesEnabled(boolean enabled);
+
+        @Override
+        public native void setForceShowTouchesOnDisplay(int displayId, boolean enabled);
+
+        @Override
+        public native void setVolumeKeysRotation(int mode);
 
         @Override
         public native void setVolumeKeysRotation(int mode);
@@ -585,8 +619,8 @@ interface NativeInputManagerService {
         public native void reloadPointerIcons();
 
         @Override
-        public native boolean setPointerIcon(PointerIcon icon, int displayId, int deviceId,
-                int pointerId, IBinder inputToken);
+        public native boolean setPointerIcon(@NonNull PointerIcon icon, int displayId, int deviceId,
+                int pointerId, @NonNull IBinder inputToken);
 
         @Override
         public native void setPointerIconVisibility(int displayId, boolean visible);
@@ -604,7 +638,7 @@ interface NativeInputManagerService {
         public native void changeUniqueIdAssociation();
 
         @Override
-        public native void changeTypeAssociation();
+        public native void changeConfigurationOverrides();
 
         @Override
         public native void changeKeyboardLayoutAssociation();
@@ -640,9 +674,6 @@ interface NativeInputManagerService {
 
         @Override
         public native void cancelCurrentTouch();
-
-        @Override
-        public native void setPointerDisplayId(int displayId);
 
         @Override
         public native String getBluetoothAddress(int deviceId);
@@ -688,5 +719,8 @@ interface NativeInputManagerService {
 
         @Override
         public native String getPhysicalLocationPath(int deviceId);
+
+        @Override
+        public native void setInteractionProviderService(InteractionProviderInternal service);
     }
 }

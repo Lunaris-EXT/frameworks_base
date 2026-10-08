@@ -17,47 +17,22 @@
 package com.android.systemui.volume.dagger;
 
 import android.content.BroadcastReceiver;
-import android.content.Context;
-import android.media.AudioManager;
-import android.os.Looper;
-import android.provider.Settings;
 
-import com.android.internal.jank.InteractionJankMonitor;
 import com.android.systemui.CoreStartable;
-import com.android.systemui.Flags;
-import com.android.systemui.dump.DumpManager;
-import com.android.systemui.media.dialog.MediaOutputDialogManager;
 import com.android.systemui.plugins.VolumeDialog;
-import com.android.systemui.plugins.VolumeDialogController;
-import com.android.systemui.statusbar.VibratorHelper;
-import com.android.systemui.statusbar.policy.AccessibilityManagerWrapper;
 import com.android.systemui.statusbar.policy.ConfigurationController;
-import com.android.systemui.statusbar.policy.DevicePostureController;
-import com.android.systemui.statusbar.policy.DeviceProvisionedController;
-import com.android.systemui.util.settings.SecureSettings;
-import com.android.systemui.util.time.SystemClock;
-import com.android.systemui.axion.volume.AxionVolumeDialogPlugin;
-import com.android.systemui.axion.volume.dagger.AxionVolumeSubcomponentModule;
-import com.android.systemui.volume.CsdWarningDialog;
 import com.android.systemui.volume.VolumeComponent;
 import com.android.systemui.volume.VolumeDialogComponent;
-import com.android.systemui.volume.VolumeDialogImpl;
 import com.android.systemui.volume.VolumePanelDialogReceiver;
 import com.android.systemui.volume.VolumeUI;
 import com.android.systemui.volume.dialog.VolumeDialogPlugin;
 import com.android.systemui.volume.dialog.dagger.VolumeDialogPluginComponent;
 import com.android.systemui.volume.dialog.dagger.factory.VolumeDialogPluginComponentFactory;
-import com.android.systemui.volume.domain.interactor.VolumeDialogInteractor;
-import com.android.systemui.volume.domain.interactor.VolumePanelNavigationInteractor;
 import com.android.systemui.volume.panel.dagger.VolumePanelComponent;
 import com.android.systemui.volume.panel.dagger.factory.VolumePanelComponentFactory;
-import com.android.systemui.volume.ui.navigation.VolumeNavigator;
-import com.google.android.msdl.domain.MSDLPlayer;
 
 import dagger.Binds;
-import dagger.Lazy;
 import dagger.Module;
-import dagger.Provides;
 import dagger.multibindings.ClassKey;
 import dagger.multibindings.IntoMap;
 import dagger.multibindings.IntoSet;
@@ -113,63 +88,6 @@ public interface VolumeModule {
     VolumeDialogPluginComponentFactory bindVolumeDialogPluginComponentFactory(
             VolumeDialogPluginComponent.Factory impl);
 
-    /**  */
-    @Provides
-    static VolumeDialog provideVolumeDialog(
-            Lazy<AxionVolumeDialogPlugin> axionVolumeDialogPlugin,
-            Lazy<VolumeDialogPlugin> volumeDialogProvider,
-            Context context,
-            VolumeDialogController volumeDialogController,
-            AccessibilityManagerWrapper accessibilityManagerWrapper,
-            DeviceProvisionedController deviceProvisionedController,
-            ConfigurationController configurationController,
-            MediaOutputDialogManager mediaOutputDialogManager,
-            InteractionJankMonitor interactionJankMonitor,
-            VolumePanelNavigationInteractor volumePanelNavigationInteractor,
-            VolumeNavigator volumeNavigator,
-            CsdWarningDialog.Factory csdFactory,
-            DevicePostureController devicePostureController,
-            DumpManager dumpManager,
-            Lazy<SecureSettings> secureSettings,
-            VibratorHelper vibratorHelper,
-            MSDLPlayer msdlPlayer,
-            SystemClock systemClock,
-            VolumeDialogInteractor interactor) {
-        final int volumeDialogType = Settings.System.getInt(
-                context.getContentResolver(),
-                "volume_dialog_type",
-                1);
-        switch (volumeDialogType) {
-            case 0:
-                return axionVolumeDialogPlugin.get();
-            case 1:
-                return volumeDialogProvider.get();
-            case 2:
-            default:
-                VolumeDialogImpl impl = new VolumeDialogImpl(
-                        context,
-                        volumeDialogController,
-                        accessibilityManagerWrapper,
-                        deviceProvisionedController,
-                        configurationController,
-                        mediaOutputDialogManager,
-                        interactionJankMonitor,
-                        volumePanelNavigationInteractor,
-                        volumeNavigator,
-                        true, /* should listen for jank */
-                        csdFactory,
-                        devicePostureController,
-                        Looper.getMainLooper(),
-                        dumpManager,
-                        secureSettings,
-                        vibratorHelper,
-                        msdlPlayer,
-                        systemClock,
-                        interactor);
-                impl.setStreamImportant(AudioManager.STREAM_SYSTEM, false);
-                impl.setAutomute(true);
-                impl.setSilentMode(false);
-                return impl;
-        }
-    }
+    @Binds
+    VolumeDialog bindVolumeDialog(VolumeDialogPlugin impl);
 }

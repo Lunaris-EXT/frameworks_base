@@ -44,9 +44,9 @@ import com.android.systemui.plugins.VolumeDialogController;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.rotation.RotationPolicyWrapper;
 import com.android.systemui.settings.UserTracker;
+import com.android.systemui.shared.plugins.PackageConfig;
 import com.android.systemui.statusbar.CommandQueue;
-import com.android.systemui.statusbar.NotificationLockscreenUserManager;
-import com.android.systemui.statusbar.NotificationListener;
+import com.android.systemui.statusbar.lockscreen.LockscreenSmartspaceController;
 import com.android.systemui.statusbar.notification.collection.render.GroupExpansionManager;
 import com.android.systemui.statusbar.notification.collection.render.GroupMembershipManager;
 import com.android.systemui.statusbar.notification.stack.AmbientState;
@@ -137,6 +137,7 @@ public class Dependency {
     @Inject Lazy<KeyguardUpdateMonitor> mKeyguardUpdateMonitor;
     @Inject Lazy<DeviceProvisionedController> mDeviceProvisionedController;
     @Inject Lazy<PluginManager> mPluginManager;
+    @Inject Lazy<PackageConfig> mPluginPackageConfig;
     @Inject Lazy<AssistManager> mAssistManager;
     @Inject Lazy<TunerService> mTunerService;
     @Inject Lazy<DarkIconDispatcher> mDarkIconDispatcher;
@@ -170,16 +171,7 @@ public class Dependency {
     @Inject Lazy<UserTracker> mUserTrackerLazy;
     @Inject Lazy<StatusBarWindowControllerStore> mStatusBarWindowControllerStoreLazy;
     @Inject Lazy<SysUIStateDisplaysInteractor> mSysUIStateDisplaysInteractor;
-    @Inject Lazy<RotationPolicyWrapper> mRotationPolicyWrapperLazy;
-    @Inject Lazy<ActivityStarter> mActivityStarter;
-    @Inject Lazy<AccessPointController> mAccessPointController;
-    @Inject Lazy<NetworkController> mNetworkController;
-    @Inject Lazy<InternetDialogManager> mInternetDialogManager;
-    @Inject Lazy<MediaOutputDialogManager> mMediaOutputDialogManager;
-    @Inject Lazy<ConfigurationController> mConfigurationController;
-    @Inject Lazy<FlashlightController> mFlashlightController;
-    @Inject Lazy<BluetoothDetailsContentViewModel> mBluetoothDetailsContentViewModel;
-    @Inject Lazy<HotspotController> mHotspotController;
+    @Inject Lazy<LockscreenSmartspaceController> mLockscreenSmartspaceControllerLazy;
 
     @Inject
     public Dependency() {
@@ -199,6 +191,7 @@ public class Dependency {
         mProviders.put(KeyguardUpdateMonitor.class, mKeyguardUpdateMonitor::get);
         mProviders.put(DeviceProvisionedController.class, mDeviceProvisionedController::get);
         mProviders.put(PluginManager.class, mPluginManager::get);
+        mProviders.put(PackageConfig.class, mPluginPackageConfig::get);
         mProviders.put(AssistManager.class, mAssistManager::get);
         mProviders.put(TunerService.class, mTunerService::get);
         mProviders.put(DarkIconDispatcher.class, mDarkIconDispatcher::get);
@@ -230,16 +223,8 @@ public class Dependency {
         mProviders.put(SysUIStateDisplaysInteractor.class, mSysUIStateDisplaysInteractor::get);
         mProviders.put(
                 StatusBarWindowControllerStore.class, mStatusBarWindowControllerStoreLazy::get);
-        mProviders.put(RotationPolicyWrapper.class, mRotationPolicyWrapperLazy::get);
-        mProviders.put(MediaOutputDialogManager.class, mMediaOutputDialogManager::get);
-        mProviders.put(AccessPointController.class, mAccessPointController::get);
-        mProviders.put(NetworkController.class, mNetworkController::get);
-        mProviders.put(InternetDialogManager.class, mInternetDialogManager::get);
-        mProviders.put(ConfigurationController.class, mConfigurationController::get);
-        mProviders.put(FlashlightController.class, mFlashlightController::get);
-        mProviders.put(BluetoothDetailsContentViewModel.class, mBluetoothDetailsContentViewModel::get);
-        mProviders.put(ActivityStarter.class, mActivityStarter::get);
-        mProviders.put(HotspotController.class, mHotspotController::get);
+        mProviders.put(LockscreenSmartspaceController.class,
+                mLockscreenSmartspaceControllerLazy::get);
 
         Dependency.setInstance(this);
     }

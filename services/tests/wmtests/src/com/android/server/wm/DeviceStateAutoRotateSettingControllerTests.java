@@ -476,11 +476,11 @@ public class DeviceStateAutoRotateSettingControllerTests {
         mTestLooper.dispatchAll();
 
         mDeviceStateAutoRotateSettingController.requestAccelerometerRotationSettingChange(
-                false, getNaturalRotation(), "");
+                false, getNaturalRotation, "");
         mTestLooper.dispatchAll();
 
         verify(mMockDisplayRotation).setUserRotationSetting(
-                eq(WindowManagerPolicy.USER_ROTATION_LOCKED), eq(getNaturalRotation()), any());
+                eq(WindowManagerPolicy.USER_ROTATION_LOCKED), eq(getNaturalRotation), any());
     }
 
     @Test
@@ -589,7 +589,7 @@ public class DeviceStateAutoRotateSettingControllerTests {
         mTestLooper.dispatchAll();
 
         verify(mMockDisplayRotation).setUserRotationSetting(
-                eq(WindowManagerPolicy.USER_ROTATION_LOCKED), eq(getNaturalRotation()), any());
+                eq(WindowManagerPolicy.USER_ROTATION_LOCKED), eq(getNaturalRotation), any());
     }
 
     private void setDeviceStateAutoRotateSetting(SparseIntArray deviceStateAutoRotateSetting) {

@@ -16,12 +16,9 @@
 
 package com.android.systemui.bouncer.ui.helper
 
-import android.view.HapticFeedbackConstants
-import android.view.View
-import com.android.keyguard.AuthInteractionProperties
-import com.android.systemui.Flags
-import com.android.systemui.dagger.qualifiers.Background
 //noinspection CleanArchitectureDependencyViolation: Data layer only referenced for this enum class
+
+import com.android.keyguard.AuthInteractionProperties
 import com.google.android.msdl.data.model.MSDLToken
 import com.google.android.msdl.domain.MSDLPlayer
 import java.util.concurrent.Executor
@@ -42,17 +39,12 @@ constructor(
     private val authInteractionProperties by
         lazy(LazyThreadSafetyMode.NONE) { AuthInteractionProperties() }
 
-    val isEnabled: Boolean
-        get() = Flags.msdlFeedback()
-
     /**
      * Deliver MSDL feedback as a result of authenticating through a bouncer.
      *
      * @param[authenticationSucceeded] Whether the authentication was successful or not.
      */
     fun playAuthenticationFeedback(authenticationSucceeded: Boolean) {
-        if (!isEnabled) return
-
         val token =
             if (authenticationSucceeded) {
                 MSDLToken.UNLOCK
@@ -64,20 +56,10 @@ constructor(
 
     /**
      * Deliver feedback when dragging through cells in the pattern bouncer. This function can play
-     * MSDL feedback using a [MSDLPlayer], or fallback to a default haptic feedback using the
-     * [View.performHapticFeedback] API and a [View].
-     *
-     * @param[view] A [View] for default haptic feedback using [View.performHapticFeedback]
+     * MSDL feedback using a [MSDLPlayer].
      */
-    fun playPatternDotFeedback(view: View?) {
-        if (!isEnabled) {
-            view?.performHapticFeedback(
-                HapticFeedbackConstants.VIRTUAL_KEY,
-                HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING,
-            )
-        } else {
-            bgExecutor.execute { msdlPlayer.get().playToken(MSDLToken.DRAG_INDICATOR_DISCRETE) }
-        }
+    fun playPatternDotFeedback() {
+        msdlPlayer.get().playToken(MSDLToken.DRAG_INDICATOR_DISCRETE)
     }
 
     /** Deliver MSDL feedback when the delete key of the pin bouncer is pressed */
@@ -96,9 +78,5 @@ constructor(
     }
 
     /** Deliver MSDL feedback when clicking on the emergency button */
-    fun playEmergencyButtonClickFeedback() {
-        if (isEnabled) {
-            bgExecutor.execute { msdlPlayer.get().playToken(MSDLToken.KEYPRESS_RETURN) }
-        }
-    }
+    fun playEmergencyButtonClickFeedback() = msdlPlayer.get().playToken(MSDLToken.KEYPRESS_RETURN)
 }

@@ -33,5 +33,5 @@ interface IFontManager {
 
     int updateFontFamily(in List<FontUpdateRequest> request, int baseVersion);
 
-    void clearUpdates();
+    int updateFontFallbacks(in List<FontUpdateRequest> fallbackRequests);
 }

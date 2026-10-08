@@ -26,11 +26,13 @@ import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.annotation.RequiresPermission;
+import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
 import android.annotation.SystemService;
 import android.annotation.TestApi;
 import android.app.ActivityManager;
 import android.app.ActivityManager.ProcessCapability;
+import android.app.ActivityManager.ProcessState;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.content.Intent;
@@ -43,6 +45,8 @@ import android.net.wifi.WifiInfo;
 import android.os.Build;
 import android.os.Process;
 import android.os.RemoteException;
+import android.ravenwood.annotation.RavenwoodKeep;
+import android.ravenwood.annotation.RavenwoodKeepPartialClass;
 import android.telephony.Annotation;
 import android.telephony.SubscriptionPlan;
 import android.util.DebugUtils;
@@ -67,6 +71,7 @@ import java.util.concurrent.Executor;
  *
  * @hide
  */
+@RavenwoodKeepPartialClass
 @TestApi
 @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
 @SystemService(Context.NETWORK_POLICY_SERVICE)
@@ -433,6 +438,7 @@ public class NetworkPolicyManager {
     }
 
     /** @hide */
+    @SuppressLint("UnflaggedApi")
     @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
     @RequiresPermission(NetworkStack.PERMISSION_MAINLINE_NETWORK_STACK)
     public void notifyDenylistChanged(@NonNull int[] uidsAdded, @NonNull int[] uidsRemoved) {
@@ -836,7 +842,8 @@ public class NetworkPolicyManager {
      * This <b>DOES NOT</b> return all default process capabilities for a proc state.
      * @hide
      */
-    public static int getDefaultProcessNetworkCapabilities(int procState) {
+    @RavenwoodKeep
+    public static int getDefaultProcessNetworkCapabilities(@ProcessState int procState) {
         switch (procState) {
             case ActivityManager.PROCESS_STATE_PERSISTENT:
             case ActivityManager.PROCESS_STATE_PERSISTENT_UI:
@@ -852,7 +859,7 @@ public class NetworkPolicyManager {
     }
 
     /**
-     * Returns true if {@param procState} is considered foreground and as such will be allowed
+     * Returns true if {@code procState} is considered foreground and as such will be allowed
      * to access network when the device is idle or in battery saver mode. Otherwise, false.
      * @hide
      */
@@ -865,7 +872,7 @@ public class NetworkPolicyManager {
 
     /** @hide */
     public static boolean isProcStateAllowedWhileIdleOrPowerSaveMode(
-            int procState, @ProcessCapability int capability) {
+            @ProcessState int procState, @ProcessCapability int capability) {
         if (procState == PROCESS_STATE_UNKNOWN) {
             return false;
         }
@@ -897,7 +904,7 @@ public class NetworkPolicyManager {
     }
 
     /**
-     * Returns true if {@param procState} is considered foreground and as such will be allowed
+     * Returns true if {@code procState} is considered foreground and as such will be allowed
      * to access network when the device is in data saver mode. Otherwise, false.
      * @hide
      */
@@ -909,7 +916,7 @@ public class NetworkPolicyManager {
     }
 
     /** @hide */
-    public static boolean isProcStateAllowedWhileOnRestrictBackground(int procState,
+    public static boolean isProcStateAllowedWhileOnRestrictBackground(@ProcessState int procState,
             @ProcessCapability int capabilities) {
         if (procState == PROCESS_STATE_UNKNOWN) {
             return false;
@@ -925,11 +932,12 @@ public class NetworkPolicyManager {
     /** @hide */
     public static final class UidState {
         public int uid;
-        public int procState;
+        public @ProcessState int procState;
         public long procStateSeq;
-        public int capability;
+        public @ProcessCapability int capability;
 
-        public UidState(int uid, int procState, long procStateSeq, int capability) {
+        public UidState(int uid, @ProcessState int procState,
+                long procStateSeq, @ProcessCapability int capability) {
             this.uid = uid;
             this.procState = procState;
             this.procStateSeq = procStateSeq;
@@ -1156,6 +1164,7 @@ public class NetworkPolicyManager {
     }
 
     /** @hide */
+    @SuppressLint("UnflaggedApi")
     @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
     @RequiresPermission(android.Manifest.permission.OBSERVE_NETWORK_POLICY)
     public void registerAllowedTransportsCallback(@Nullable Executor executor,
@@ -1171,6 +1180,7 @@ public class NetworkPolicyManager {
     }
 
     /** @hide */
+    @SuppressLint("UnflaggedApi")
     @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
     @RequiresPermission(android.Manifest.permission.OBSERVE_NETWORK_POLICY)
     public void unregisterAllowedTransportsCallback(@NonNull AllowedTransportsCallback callback) {
@@ -1185,6 +1195,7 @@ public class NetworkPolicyManager {
     }
 
     /** @hide */
+    @SuppressLint("UnflaggedApi")
     @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
     public interface AllowedTransportsCallback {
         /** @hide */
@@ -1221,7 +1232,8 @@ public class NetworkPolicyManager {
         }
     }
 
-    /** {@hide} */
+    /** @hide */
+    @SuppressLint({"ListenerInterface", "MissingNullability", "RawAidl", "UnflaggedApi"})
     public static class Listener extends INetworkPolicyListener.Stub {
         @Override public void onUidRulesChanged(int uid, int uidRules) { }
         @Override public void onMeteredIfacesChanged(String[] meteredIfaces) { }
