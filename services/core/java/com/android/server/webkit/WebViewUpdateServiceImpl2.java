@@ -18,6 +18,7 @@ package com.android.server.webkit;
 import static com.android.server.pm.ComputerEngine.isDebuggable;
 
 import android.annotation.Nullable;
+import android.app.AppGlobals;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.Signature;

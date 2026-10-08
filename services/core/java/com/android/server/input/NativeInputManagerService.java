@@ -178,8 +178,6 @@ interface NativeInputManagerService {
 
     void setVolumeKeysRotation(int mode);
 
-    void setVolumeKeysRotation(int mode);
-
     void setNonInteractiveDisplays(int[] displayIds);
 
     void reloadCalibration();
@@ -542,9 +540,6 @@ interface NativeInputManagerService {
 
         @Override
         public native void setForceShowTouchesOnDisplay(int displayId, boolean enabled);
-
-        @Override
-        public native void setVolumeKeysRotation(int mode);
 
         @Override
         public native void setVolumeKeysRotation(int mode);

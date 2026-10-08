@@ -3069,7 +3069,7 @@ public final class PowerManagerService extends SystemService
                 if (mBootCompleted) {
                     if (mIsPowered && !BatteryManager.isPlugWired(oldPlugType)
                             && BatteryManager.isPlugWired(mPlugType)) {
-                        mNotifier.onWiredChargingStarted(mUserId);
+                        mNotifier.onWiredChargingStarted(mBatteryLevel, mUserId);
                     } else if (wasPowered && !mIsPowered) {
                         if (oldPlugType == BatteryManager.BATTERY_PLUGGED_WIRELESS) {
                             mNotifier.onWirelessChargingInterrupted(mUserId);
@@ -6158,10 +6158,6 @@ public final class PowerManagerService extends SystemService
                         groupIdsToActUpon = (IntArray) msg.obj;
                     }
                     setForceDisableWakelocksInternal(msg.arg1 == 1, groupIdsToActUpon);
-                    break;
-                case MSG_WAKE_UP:
-                    cleanupProximity();
-                    ((Runnable) msg.obj).run();
                     break;
                 case MSG_WAKE_UP:
                     cleanupProximity();

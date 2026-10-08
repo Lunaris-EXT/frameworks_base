@@ -36,6 +36,8 @@ import static android.util.DisplayMetrics.DENSITY_DEFAULT;
 import static android.window.DisplayAreaOrganizer.FEATURE_UNDEFINED;
 
 import static com.android.internal.protolog.common.LogLevel.VERBOSE;
+import com.android.internal.protolog.ProtoLog;
+import com.android.internal.protolog.WmProtoLogGroups;
 import static com.android.server.wm.ActivityStarter.Request;
 import static com.android.server.wm.DesktopModeHelper.canEnterDesktopMode;
 import static com.android.server.wm.LaunchParamsUtil.getPreferredLaunchTaskDisplayArea;

@@ -279,10 +279,14 @@ import com.android.server.wm.WindowManagerInternal.AppTransitionListener;
 
 import dalvik.system.PathClassLoader;
 
+import com.android.server.policy.pocket.PocketLock;
+
+import lineageos.hardware.LineageHardwareManager;
 import lineageos.providers.LineageSettings;
 
 import org.lineageos.internal.buttons.LineageButtons;
 import org.lineageos.internal.util.ActionUtils;
+import org.rising.server.ShakeGestureService;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -690,6 +694,14 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     Intent mDeskDockIntent;
     Intent mVrHeadsetHomeIntent;
 
+    // User defined hw key config
+    boolean mHardwareKeysDisable = false;
+    boolean mSwapCapacitiveKeys = false;
+    ANBIHandler mANBIHandler;
+    private boolean mANBIEnabled;
+
+    private ShakeGestureService mShakeGestures;
+
     // Tracks user-customisable behavior for certain key events
     private Action mBackLongPressAction;
     private Action mHomeLongPressAction;
@@ -701,6 +713,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     private Action mAppSwitchPressAction;
     private Action mAppSwitchLongPressAction;
     private Action mEdgeLongSwipeAction;
+    private Action mThreeFingersSwipeAction;
+    private Action mShakeGestureAction;
 
     // support for activating the lock screen while the screen is on
     private HashSet<Integer> mAllowLockscreenWhenOnDisplays = new HashSet<>();
@@ -831,6 +845,36 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     private boolean mLongSwipeDown;
     private CameraAvailbilityListener mCameraAvailabilityListener;
     private ScreenshotHelper mScreenshotHelper;
+
+    private LineageHardwareManager mLineageHardware;
+    private boolean mGlobalActionsOnLockEnable = true;
+    private ThreeFingersSwipeListener mThreeFingersSwipe;
+    private boolean mThreeFingersSwipeHasAction;
+
+    private boolean mScreenOnReclaim;
+    private long lastMemoryReleaseTime = 0L;
+    private static final long MEMORY_RELEASE_INTERVAL_MS = 60 * 1000;
+    private long lastGcTime = 0L;
+    private static final long GC_INTERVAL_MS = 60 * 1000;
+
+    private PocketManager mPocketManager;
+    private PocketLock mPocketLock;
+    private boolean mPocketLockShowing;
+    private boolean mIsDeviceInPocket;
+    private final IPocketCallback mPocketCallback = new IPocketCallback.Stub() {
+        @Override
+        public void onStateChanged(boolean isDeviceInPocket, int reason) {
+            boolean wasDeviceInPocket = mIsDeviceInPocket;
+            if (reason == PocketManager.REASON_SENSOR) {
+                mIsDeviceInPocket = isDeviceInPocket;
+            } else {
+                mIsDeviceInPocket = false;
+            }
+            if (wasDeviceInPocket != mIsDeviceInPocket) {
+                handleDevicePocketStateChanged();
+            }
+        }
+    };
 
     private class PolicyHandler extends Handler {
 
@@ -4935,36 +4979,6 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         }
     }
 
-    private void setVolumeWakeTriggered(final int keyCode, boolean triggered) {
-        switch (keyCode) {
-            case KeyEvent.KEYCODE_VOLUME_DOWN:
-                mVolumeDownWakeTriggered = triggered;
-                break;
-            case KeyEvent.KEYCODE_VOLUME_UP:
-                mVolumeUpWakeTriggered = triggered;
-                break;
-            case KeyEvent.KEYCODE_VOLUME_MUTE:
-                mVolumeMuteWakeTriggered = triggered;
-                break;
-            default:
-                Log.w(TAG, "setVolumeWakeTriggered: unexpected keyCode=" + keyCode);
-        }
-    }
-
-    private boolean getVolumeWakeTriggered(final int keyCode) {
-        switch (keyCode) {
-            case KeyEvent.KEYCODE_VOLUME_DOWN:
-                return mVolumeDownWakeTriggered;
-            case KeyEvent.KEYCODE_VOLUME_UP:
-                return mVolumeUpWakeTriggered;
-            case KeyEvent.KEYCODE_VOLUME_MUTE:
-                return mVolumeMuteWakeTriggered;
-            default:
-                Log.w(TAG, "getVolumeWakeTriggered: unexpected keyCode=" + keyCode);
-                return false;
-        }
-    }
-
     /** {@inheritDoc} */
     @Override
     public void notifyLidSwitchChanged(long whenNanos, boolean lidOpen) {
@@ -7956,5 +7970,74 @@ public class PhoneWindowManager implements WindowManagerPolicy {
 
     private void takeScreenshot(int type, int source) {
         mScreenshotHelper.takeScreenshot(type, source, mHandler, null);
+    }
+
+    private void handleDevicePocketStateChanged() {
+        final boolean interactive = mPowerManager.isInteractive();
+        if (mIsDeviceInPocket) {
+            showPocketLock(interactive);
+        } else {
+            hidePocketLock(interactive);
+        }
+    }
+
+    private void showPocketLock(boolean animate) {
+        if (!mSystemReady || !mSystemBooted || !mKeyguardDrawnOnce
+                || mPocketLock == null || mPocketLockShowing) {
+            return;
+        }
+
+        if (mPowerManager.isInteractive() && !isKeyguardShowingAndNotOccluded()){
+            return;
+        }
+
+        if (DEBUG) {
+            Log.d(TAG, "showPocketLock, animate=" + animate);
+        }
+
+        mPocketLock.show(animate);
+        mPocketLockShowing = true;
+
+        mPocketManager.setPocketLockVisible(true);
+    }
+
+    private void hidePocketLock(boolean animate) {
+        if (!mSystemReady || !mSystemBooted || !mKeyguardDrawnOnce
+                || mPocketLock == null || !mPocketLockShowing) {
+            return;
+        }
+
+        if (DEBUG) {
+            Log.d(TAG, "hidePocketLock, animate=" + animate);
+        }
+
+        mPocketLock.hide(animate);
+        mPocketLockShowing = false;
+
+        mPocketManager.setPocketLockVisible(false);
+    }
+
+    private boolean isBatteryLow() {
+        BatteryManager bm = mContext.getSystemService(BatteryManager.class);
+        return bm != null && bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) <=
+                mContext.getResources().getInteger(
+                        com.android.internal.R.integer.config_lowBatteryReclaimSkipThreshold);
+    }
+
+    private void releaseMemoryAtScreenOn() {
+        long currentTime = System.currentTimeMillis();
+        if (isBatteryLow()) {
+            Slog.d(TAG, "Skipping screen-on memory reclaim: battery low");
+            return;
+        }
+        if (lastMemoryReleaseTime == 0L || currentTime - lastMemoryReleaseTime > MEMORY_RELEASE_INTERVAL_MS) {
+            try {
+                mActivityManagerService.releaseMemory(900, 25, false, false);
+                lastMemoryReleaseTime = currentTime;
+                Slog.d(TAG, "Performing screen-on memory reclaim.");
+            } catch (RemoteException e) {
+                Slog.w(TAG, "releaseMemory failed", e);
+            }
+        }
     }
 }

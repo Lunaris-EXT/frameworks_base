@@ -932,8 +932,6 @@ public abstract class WindowManagerInternal {
      */
     public abstract boolean isHomeSupportedOnDisplay(int displayId);
 
-    public abstract boolean isImeInputTargetStaleForUpdate(IBinder windowToken);
-
     /**
      * Sets whether the relevant display content ignores fixed orientation, aspect ratio
      * and resizability of apps.
@@ -1404,4 +1402,12 @@ public abstract class WindowManagerInternal {
      * @param ready True if the theme is ready, false otherwise.
      */
     public abstract void setThemeReady(boolean ready);
+
+    /**
+     * Register/unregister callbacks for secure content showing up on the display.
+     */
+    public abstract void registerDisplaySecureContentListener(
+            DisplaySecureContentListener listener);
+    public abstract void unregisterDisplaySecureContentListener(
+            DisplaySecureContentListener listener);
 }

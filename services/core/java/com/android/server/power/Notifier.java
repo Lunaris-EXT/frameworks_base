@@ -1115,21 +1115,6 @@ public class Notifier {
     }
 
     /**
-     * Called when wired charging has been disconnected - to provide user feedback
-     */
-    public void onWiredChargingDisconnected(@UserIdInt int userId) {
-        if (DEBUG) {
-            Slog.d(TAG, "onWiredChargingDisconnected");
-        }
-
-        mSuspendBlocker.acquire();
-        Message msg = mHandler.obtainMessage(MSG_WIRED_CHARGING_DISCONNECTED);
-        msg.setAsynchronous(true);
-        msg.arg1 = userId;
-        mHandler.sendMessage(msg);
-    }
-
-    /**
      * Called when the screen policy changes.
      */
     public void onScreenPolicyUpdate(int displayGroupId, int newPolicy) {
@@ -1405,11 +1390,6 @@ public class Notifier {
                 ThemeUtils.OVERLAY_CATEGORY_CHARGING_ANIMATION,
                 UserHandle.of(userId));
         return !chargingOverlayEnabled;
-    }
-
-    private void showChargingStopped(@UserIdInt int userId, boolean wireless) {
-        playChargingStartedFeedback(userId, wireless);
-        mSuspendBlocker.release();
     }
 
     private void showChargingStopped(@UserIdInt int userId, boolean wireless) {

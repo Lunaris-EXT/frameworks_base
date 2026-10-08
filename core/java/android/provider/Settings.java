@@ -15976,6 +15976,31 @@ public final class Settings {
         public static final String HIDE_PRIVATESPACE_ENTRY_POINT = "hide_privatespace_entry_point";
 
         /**
+         * @hide
+         */
+        public static final String SPOOF_PIF_CONFIG = "spoof_pif_config";
+
+        /**
+         * @hide
+         */
+        public static final String SPOOF_GAMEPROPS_CONFIG = "spoof_gameprops_config";
+
+        /**
+         * @hide
+         */
+        public static final String SPOOF_TRICKYSTORE_TARGET = "spoof_trickystore_target";
+
+        /**
+         * @hide
+         */
+        public static final String SPOOF_TRICKYSTORE_KEYBOX = "spoof_trickystore_keybox";
+
+        /**
+         * @hide
+         */
+        public static final String SPOOF_TRICKYSTORE_PATCH = "spoof_trickystore_patch";
+
+        /**
          * Whether or not secure windows should be disabled. This only works on debuggable builds.
          *
          * <p>When this setting is set to a non-zero value, all windows are treated as non-secure.
@@ -21242,6 +21267,13 @@ public final class Settings {
          */
         @Readable
         public static final String SAFE_BOOT_DISALLOWED = "safe_boot_disallowed";
+
+        /**
+         * Whether refresh rate should be switched to 60Hz on power save mode.
+         * @hide
+         */
+        @Readable
+        public static final String LOW_POWER_REFRESH_RATE = "low_power_rr_switch";
 
         /**
          * Indicates whether this device is currently in retail demo mode. If true, the device

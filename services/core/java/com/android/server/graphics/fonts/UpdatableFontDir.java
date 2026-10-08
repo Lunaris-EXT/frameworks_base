@@ -70,6 +70,11 @@ final class UpdatableFontDir {
     private static final String RANDOM_DIR_PREFIX = "~~";
 
     private static final String FONT_SIGNATURE_FILE = "font.fsv_sig";
+
+    private static final File AX_FONT_BACKUP_DIR = new File("/data/system/ax_font_backup");
+    private static final File AX_FONT_BACKUP_FILES = new File(AX_FONT_BACKUP_DIR, "files");
+    private static final File AX_FONT_BACKUP_CONFIG = new File(AX_FONT_BACKUP_DIR, "config.xml");
+
     private static final String EMOJI_LANG = "und-Zsye";
     private static final String EMOJI_DEFAULT_POSTSCRIPT_NAME = "NotoColorEmoji";
     // This is from frameworks/minikin/include/minikin/FontCollection.h
@@ -1173,5 +1178,88 @@ final class UpdatableFontDir {
             }
         }
         return count;
+    }
+
+    /* package */ static void deleteBackup() {
+        if (AX_FONT_BACKUP_DIR.exists()) {
+            FileUtils.deleteContentsAndDir(AX_FONT_BACKUP_DIR);
+        }
+    }
+
+    /* package */ void backupFontFiles() {
+        if (!axFontFeatureSupport) return;
+        try {
+            FileUtils.deleteContentsAndDir(AX_FONT_BACKUP_DIR);
+            AX_FONT_BACKUP_DIR.mkdirs();
+            AX_FONT_BACKUP_FILES.mkdirs();
+
+            File[] dirs = mFilesDir.listFiles();
+            if (dirs == null) return;
+            for (File dir : dirs) {
+                if (!dir.getName().startsWith(RANDOM_DIR_PREFIX)) continue;
+                File destDir = new File(AX_FONT_BACKUP_FILES, dir.getName());
+                destDir.mkdirs();
+                File[] files = dir.listFiles();
+                if (files == null) continue;
+                for (File file : files) {
+                    Files.copy(file.toPath(),
+                            new File(destDir, file.getName()).toPath(),
+                            StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+
+            File configSrc = mConfigFile.getBaseFile();
+            if (configSrc.exists()) {
+                Files.copy(configSrc.toPath(), AX_FONT_BACKUP_CONFIG.toPath(),
+                        StandardCopyOption.REPLACE_EXISTING);
+            }
+            Slog.i(TAG, "Font backup created successfully");
+        } catch (IOException e) {
+            Slog.e(TAG, "Failed to backup font files", e);
+        }
+    }
+
+    /* package */ boolean restoreFromBackup() {
+        if (!axFontFeatureSupport) return false;
+        if (!AX_FONT_BACKUP_DIR.exists() || !AX_FONT_BACKUP_FILES.exists()) return false;
+
+        File[] backupDirs = AX_FONT_BACKUP_FILES.listFiles();
+        if (backupDirs == null || backupDirs.length == 0) return false;
+
+        try {
+            mFilesDir.mkdirs();
+
+            for (File backupDir : backupDirs) {
+                if (!backupDir.isDirectory()) continue;
+                File destDir = new File(mFilesDir, backupDir.getName());
+                destDir.mkdirs();
+                Os.chmod(destDir.getAbsolutePath(), 0711);
+                File[] files = backupDir.listFiles();
+                if (files == null) continue;
+                for (File file : files) {
+                    File dest = new File(destDir, file.getName());
+                    Files.copy(file.toPath(), dest.toPath(),
+                            StandardCopyOption.REPLACE_EXISTING);
+                    if (file.getName().equals(FONT_SIGNATURE_FILE)) {
+                        Os.chmod(dest.getAbsolutePath(), 0600);
+                    } else {
+                        Os.chmod(dest.getAbsolutePath(), 0644);
+                    }
+                }
+            }
+
+            File configDest = mConfigFile.getBaseFile();
+            configDest.getParentFile().mkdirs();
+            if (AX_FONT_BACKUP_CONFIG.exists()) {
+                Files.copy(AX_FONT_BACKUP_CONFIG.toPath(), configDest.toPath(),
+                        StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            Slog.i(TAG, "Font files restored from backup");
+            return true;
+        } catch (IOException | ErrnoException e) {
+            Slog.e(TAG, "Failed to restore font files from backup", e);
+            return false;
+        }
     }
 }

@@ -78,6 +78,7 @@ import static android.os.Process.SYSTEM_UID;
 import static android.provider.Settings.Secure.VOLUME_HUSH_MUTE;
 import static android.provider.Settings.Secure.VOLUME_HUSH_OFF;
 import static android.provider.Settings.Secure.VOLUME_HUSH_VIBRATE;
+import static android.provider.Settings.Secure.VOLUME_HUSH_CYCLE;
 
 import static com.android.internal.annotations.VisibleForTesting.Visibility.PACKAGE;
 import static com.android.media.audio.Flags.alarmMinVolumeZero;

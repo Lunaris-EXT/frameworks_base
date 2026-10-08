@@ -317,6 +317,13 @@ public final class DisplayManagerService extends SystemService {
     private static final int MSG_RECEIVED_DEVICE_STATE = 9;
     private static final int MSG_DISPATCH_PENDING_PROCESS_EVENTS = 10;
     private static final int MSG_DELIVER_DISPLAY_SNAPSHOT = 11;
+    private static final int MSG_UPDATE_DISABLE_HW_OVERLAYS = 12;
+    private static final String SURFACE_FLINGER_SERVICE_KEY = "SurfaceFlinger";
+    private static final String SURFACE_COMPOSER_INTERFACE_KEY = "android.ui.ISurfaceComposer";
+    private static final int SURFACE_FLINGER_DISABLE_OVERLAYS_CODE = 1008;
+    private static final int SURFACE_FLINGER_READ_CODE = 1010;
+    private static final int SETTING_VALUE_ON = 1;
+    private static final int SETTING_VALUE_OFF = 0;
     private static final int[] EMPTY_ARRAY = new int[0];
     private static final HdrConversionMode HDR_CONVERSION_MODE_UNSUPPORTED = new HdrConversionMode(
             HDR_CONVERSION_UNSUPPORTED);
@@ -4179,10 +4186,8 @@ public final class DisplayManagerService extends SystemService {
             @Override
             public void onLockTaskModeChanged(int mode) {
                 synchronized (mSyncRoot) {
-                    if (mFlags.isDisplayMirrorInLockTaskModeEnabled()) {
-                        updateMirrorBuiltInDisplaySettingLocked(
-                                /*shouldSendDisplayChangeEvent=*/ true);
-                    }
+                    updateMirrorBuiltInDisplaySettingLocked(
+                            /*shouldSendDisplayChangeEvent=*/ true);
                 }
             }
 
@@ -4936,6 +4941,10 @@ public final class DisplayManagerService extends SystemService {
 
                 case MSG_DELIVER_DISPLAY_SNAPSHOT:
                     deliverDisplaySnapshot(msg.arg1, (CallbackRecord.PendingSnapshotEvent) msg.obj);
+                    break;
+
+                case MSG_UPDATE_DISABLE_HW_OVERLAYS:
+                    updatePerAppDisableHwOverlays();
                     break;
             }
         }

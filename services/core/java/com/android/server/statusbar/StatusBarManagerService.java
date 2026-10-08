@@ -872,6 +872,17 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
                 }
             }
         }
+
+        @Override
+        public void restartSystemUI() {
+            IStatusBar bar = mBar;
+            if (bar != null) {
+                try {
+                    bar.restartSystemUI();
+                } catch (RemoteException e) {
+                }
+            }
+        }
     };
 
     private final GlobalActionsProvider mGlobalActionsProvider = new GlobalActionsProvider() {
@@ -2576,18 +2587,6 @@ public class StatusBarManagerService extends IStatusBarService.Stub implements D
         runWithStatusBarIfPresent(
                 bar -> bar.showRearDisplayDialog(currentState),
                 "showRearDisplayDialog");
-    }
-
-    @Override
-    public void startAssist(Bundle args) {
-        enforceStatusBarService();
-        if (mBar != null) {
-            try {
-                mBar.startAssist(args);
-            } catch (RemoteException e) {
-                Slog.e(TAG, "startAssist", e);
-            }
-        }
     }
 
     @Override

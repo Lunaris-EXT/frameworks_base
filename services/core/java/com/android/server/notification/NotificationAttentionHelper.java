@@ -1163,10 +1163,6 @@ public final class NotificationAttentionHelper {
         return nr != null && mLineageNotificationLights.isForcedOn(nr.getSbn().getNotification());
     }
 
-    private boolean isLedForcedOn(NotificationRecord nr) {
-        return nr != null && mLineageNotificationLights.isForcedOn(nr.getSbn().getNotification());
-    }
-
     boolean canShowLightsLocked(final NotificationRecord record, final Signals signals,
             boolean aboveThreshold) {
         if (!mSystemReady) {

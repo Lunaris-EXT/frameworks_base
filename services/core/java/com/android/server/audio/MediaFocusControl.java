@@ -113,6 +113,10 @@ public class MediaFocusControl implements PlayerFocusEnforcer {
         initFocusThreading();
     }
 
+    boolean isMultiAudioFocusEnabled() {
+        return mMultiAudioFocusEnabled;
+    }
+
     protected void dump(PrintWriter pw) {
         pw.println("## MediaFocusControl");
         pw.println("  has focus policy:" + (mFocusPolicy != null));
@@ -2011,30 +2015,6 @@ public class MediaFocusControl implements PlayerFocusEnforcer {
         @Override
         public int hashCode() {
             return mUid;
-        }
-    }
-
-    private class SettingsObserver extends ContentObserver {
-
-        SettingsObserver() {
-            super(new Handler());
-            ContentResolver cr = mContext.getContentResolver();
-            cr.registerContentObserver(Settings.System.getUriFor(
-                    Settings.System.SHOW_APP_VOLUME), true, this);
-            mPerAppVolumeEnabled = Settings.System.getIntForUser(cr,
-                    Settings.System.SHOW_APP_VOLUME, 1, cr.getUserId()) != 0;
-        }
-
-        @Override
-        public void onChange(boolean selfChange) {
-            super.onChange(selfChange);
-            ContentResolver cr = mContext.getContentResolver();
-            boolean newValue = Settings.System.getIntForUser(cr,
-                    Settings.System.SHOW_APP_VOLUME, 1, cr.getUserId()) != 0;
-            if (mPerAppVolumeEnabled != newValue) {
-                mPerAppVolumeEnabled = newValue;
-                updateMultiAudioFocus(mMultiAudioFocusEnabled);
-            }
         }
     }
 }

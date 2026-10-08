@@ -170,6 +170,7 @@ fun Expandable(
         modifier = modifier,
         onClick = onClick,
         onClickLabel = onClickLabel,
+        onLongClick = onLongClick,
         interactionSource = interactionSource,
         useModifierBasedImplementation = useModifierBasedImplementation,
         defaultMinSize = defaultMinSize,
@@ -241,7 +242,7 @@ fun Expandable(
     }
 
     if (useModifierBasedImplementation || expandableForceModifierImplementation()) {
-        Box(modifier.expandable(expandable, controller, onClick, onClickLabel, interactionSource)) {
+        Box(modifier.expandable(expandable, controller, onClick, onClickLabel, onLongClick, interactionSource)) {
             WrappedContent(
                 expandable,
                 controller.contentColor,
@@ -340,6 +341,7 @@ fun Expandable(
                             controller,
                             onClick,
                             onClickLabel,
+                            onLongClick,
                             interactionSource,
                         )
                     )
@@ -417,7 +419,7 @@ private fun Modifier.expandable(
         .thenIf(drawContent) {
             Modifier.border(controller)
                 .then(
-                    clickModifier(expandable, controller, onClick, onClickLabel, interactionSource)
+                    clickModifier(expandable, controller, onClick, onClickLabel, onLongClick, interactionSource)
                 )
                 .animatedBackground(controller.color, shape = controller.shape)
         }
@@ -606,8 +608,8 @@ private fun clickModifier(
             interactionSource,
             indication = null,
             onClickLabel = onClickLabel,
-            onLongClick = { onLongClick?.invoke(controller.expandable) },
-            onClick = { onClick?.invoke(controller.expandable) }
+            onLongClick = { onLongClick.invoke(expandable) },
+            onClick = { onClick?.invoke(expandable) }
         )
     } else if (interactionSource != null) {
         return Modifier.clickable(
@@ -615,14 +617,22 @@ private fun clickModifier(
             indication = null,
             onClickLabel = onClickLabel,
         ) {
-            onClick(expandable)
+            onClick?.invoke(expandable)
         }
     }
 
     // If no interaction source is provided, we draw the default indication (a ripple) and make sure
     // it's clipped by the expandable shape.
-    return Modifier.clip(controller.shape).clickable(onClickLabel = onClickLabel) {
-        onClick(expandable)
+    if (onLongClick != null) {
+        return Modifier.clip(controller.shape).combinedClickable(
+            onClickLabel = onClickLabel,
+            onLongClick = { onLongClick.invoke(expandable) },
+            onClick = { onClick?.invoke(expandable) }
+        )
+    } else {
+        return Modifier.clip(controller.shape).clickable(onClickLabel = onClickLabel) {
+            onClick?.invoke(expandable)
+        }
     }
 }
 
