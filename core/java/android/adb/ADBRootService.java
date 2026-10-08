@@ -23,7 +23,7 @@ import android.os.ServiceManager;
 import android.util.Slog;
 
 /**
- * {@hide}
+ * @hide
  */
 public class ADBRootService {
     private static final String TAG = "ADBRootService";
