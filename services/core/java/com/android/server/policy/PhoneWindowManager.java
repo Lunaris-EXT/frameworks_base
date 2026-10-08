@@ -968,12 +968,6 @@ public class PhoneWindowManager implements WindowManagerPolicy {
                 case MSG_CAMERA_LONG_PRESS:
                     mIsLongPress = true;
                     break;
-                case MSG_TOGGLE_TORCH:
-                    toggleTorch();
-                    break;
-                case MSG_CAMERA_LONG_PRESS:
-                    mIsLongPress = true;
-                    break;
             }
         }
     }
