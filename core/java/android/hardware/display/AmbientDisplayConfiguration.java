@@ -135,7 +135,7 @@ public class AmbientDisplayConfiguration {
                 && ambientDisplayAvailable();
     }
 
-    /** {@hide} */
+    /** @hide */
     private boolean pulseOnCustomDozeEventEnabled(int user) {
         return (Settings.System.getIntForUser(mContext.getContentResolver(), "doze_trigger_doubletap", 0, user) != 0)
                 && pulseOnNotificationAvailable();
@@ -170,30 +170,30 @@ public class AmbientDisplayConfiguration {
         return mContext.getResources().getBoolean(R.bool.config_dozePulsePickup);
     }
 
-    /** {@hide} */
+    /** @hide */
     public boolean tiltGestureEnabled(int user) {
         return boolSettingDefaultOff(Settings.Secure.DOZE_TILT_GESTURE, user)
                 && dozeTiltSensorAvailable();
     }
 
-    /** {@hide} */
+    /** @hide */
     public boolean dozeTiltSensorAvailable() {
         return mContext.getResources().getBoolean(R.bool.config_dozePulseTilt);
     }
 
-    /** {@hide} */
+    /** @hide */
     public boolean handwaveGestureEnabled(int user) {
         return boolSettingDefaultOff(Settings.Secure.DOZE_HANDWAVE_GESTURE, user)
                 && dozeProximitySensorAvailable();
     }
 
-    /** {@hide} */
+    /** @hide */
     public boolean pocketGestureEnabled(int user) {
         return boolSettingDefaultOff(Settings.Secure.DOZE_POCKET_GESTURE, user)
                 && dozeProximitySensorAvailable();
     }
 
-    /** {@hide} */
+    /** @hide */
     public boolean dozeProximitySensorAvailable() {
         return mContext.getResources().getBoolean(R.bool.config_dozePulseProximity);
     }

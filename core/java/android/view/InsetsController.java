@@ -1328,12 +1328,13 @@ public class InsetsController implements WindowInsetsController, InsetsAnimation
                     || getAnimationType(ime()) == ANIMATION_TYPE_USER) {
                 ProtoLog.d(IME_INSETS_CONTROLLER, "hide(ime())");
 
-            if (statsToken == null) {
-                statsToken = ImeTracker.forLogging().onStart(ImeTracker.TYPE_HIDE,
-                        ImeTracker.ORIGIN_CLIENT,
-                        SoftInputShowHideReason.HIDE_SOFT_INPUT_BY_INSETS_API,
-                        mHost.isHandlingPointerEvent() /* fromUser */,  UserHandle.myUserId(),
-                        mHost.getRootViewContext().getDisplayId());
+                if (statsToken == null) {
+                    statsToken = ImeTracker.forLogging().onStart(ImeTracker.TYPE_HIDE,
+                            ImeTracker.ORIGIN_CLIENT,
+                            SoftInputShowHideReason.HIDE_SOFT_INPUT_BY_INSETS_API,
+                            mHost.isHandlingPointerEvent() /* fromUser */,  UserHandle.myUserId(),
+                            mHost.getRootViewContext().getDisplayId());
+                }
             }
         }
         Trace.asyncTraceBegin(TRACE_TAG_VIEW, "IC.hideRequestFromApi", 0);
