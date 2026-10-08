@@ -17,6 +17,7 @@ package android.hardware.camera2.impl;
 
 import android.annotation.FlaggedApi;
 import android.annotation.NonNull;
+import android.app.ActivityThread;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraDevice;
