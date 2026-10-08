@@ -80,10 +80,6 @@ final class UpdatableFontDir {
     // This is from frameworks/minikin/include/minikin/FontCollection.h
     private static final int MAX_FAMILY_COUNT = 254;
 
-    private static final File AX_FONT_BACKUP_DIR = new File("/data/system/ax_font_backup");
-    private static final File AX_FONT_BACKUP_FILES = new File(AX_FONT_BACKUP_DIR, "files");
-    private static final File AX_FONT_BACKUP_CONFIG = new File(AX_FONT_BACKUP_DIR, "config.xml");
-
     /** Interface to mock font file access in tests. */
     interface FontFileParser {
         String getPostScriptName(File file) throws IOException;
