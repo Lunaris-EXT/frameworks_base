@@ -225,6 +225,7 @@ public final class Choreographer {
     @Deprecated
     private long mFrameIntervalNanos;
     private long mLastFrameIntervalNanos;
+    private boolean mEnableTraversalLast;
 
     private int mFPSDivisor = 1;
     private final DisplayEventReceiver.VsyncEventData mLastVsyncEventData =
@@ -1221,6 +1222,9 @@ public final class Choreographer {
             mFrameInfo.markPerformTraversalsStart();
             doCallbacks(Choreographer.CALLBACK_TRAVERSAL);
 
+            if (mEnableTraversalLast) {
+                doCallbacks(Choreographer.CALLBACK_TRAVERSAL_LAST);
+            }
             doCallbacks(Choreographer.CALLBACK_COMMIT);
         } finally {
             AnimationUtils.unlockAnimationClock();

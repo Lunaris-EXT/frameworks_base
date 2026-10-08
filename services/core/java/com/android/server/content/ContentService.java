@@ -609,9 +609,11 @@ public final class ContentService extends IContentService.Stub {
                 // are important to the user and to all system apps if there's at least one changed
                 // settings uri; all other background observers are delayed to avoid stampeding
                 final boolean noDelay = (key.flags & ContentResolver.NOTIFY_NO_DELAY) != 0;
-                @ProcessState final int procState = LocalServices.getService(
-                                ActivityManagerInternal.class)
-                        .getUidProcessState(key.uid);
+                boolean isImmediate = noDelay;
+                if (!isImmediate) {
+                    @ProcessState final int procState = LocalServices.getService(
+                                    ActivityManagerInternal.class)
+                            .getUidProcessState(key.uid);
                     isImmediate = procState <= ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND;
                 }
                 if (hasSettingsUri && !isImmediate) {

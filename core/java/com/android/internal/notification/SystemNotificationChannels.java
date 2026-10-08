@@ -72,6 +72,7 @@ public class SystemNotificationChannels {
     public static final String ACCESSIBILITY_HEARING_DEVICE = "ACCESSIBILITY_HEARING_DEVICE";
     public static final String ACCESSIBILITY_SECURITY_POLICY = "ACCESSIBILITY_SECURITY_POLICY";
     public static final String ABUSIVE_BACKGROUND_APPS = "ABUSIVE_BACKGROUND_APPS";
+    public static final String SLEEP = "SLEEP";
     public static final String PARENTAL_CONTROLS = "PARENTAL_CONTROLS";
 
     @VisibleForTesting

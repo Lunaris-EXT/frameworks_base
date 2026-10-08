@@ -31,6 +31,8 @@ import android.os.SystemClock;
 import android.ravenwood.annotation.RavenwoodIgnore;
 import android.ravenwood.annotation.RavenwoodKeepPartialClass;
 import android.util.AttributeSet;
+import android.util.DisplayMetrics;
+import android.util.PathParser;
 import android.util.Xml;
 import android.view.animation.Interpolator;
 import android.view.InflateException;
@@ -69,6 +71,13 @@ public class AnimationUtils {
      */
     private static final int TOGETHER = 0;
     private static final int SEQUENTIALLY = 1;
+
+    private static Animation activityOpenEnterAnim;
+    private static Animation activityOpenExitAnim;
+    private static Animation activityCloseEnterAnim;
+    private static Animation activityCloseExitAnim;
+    private static Animation activityAppStartingExitAnim;
+    private static int lastAnimStyle = -1;
 
     private static class AnimationState {
         boolean animationClockLocked;
@@ -130,7 +139,6 @@ public class AnimationUtils {
     public static void unlockAnimationClock() {
         AnimationState state = sAnimationState.get();
         state.animationClockLocked = false;
-        state.mExpectedPresentationTimeNanos = 0L;
     }
 
     /**

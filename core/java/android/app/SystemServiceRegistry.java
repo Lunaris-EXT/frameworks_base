@@ -2338,7 +2338,6 @@ public final class SystemServiceRegistry {
                 case Context.CONTEXTHUB_SERVICE:
                 case Context.VIRTUALIZATION_SERVICE:
                 case Context.VIRTUAL_DEVICE_SERVICE:
-                case Context.DROPBOX_SERVICE:
                 case Context.PERSISTENT_DATA_BLOCK_SERVICE:
                 case Context.OEM_LOCK_SERVICE:
                 case Context.AX_SANDBOX_SERVICE:

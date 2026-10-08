@@ -157,6 +157,10 @@ public class SystemSensorManager extends SensorManager {
 
     private Optional<Boolean> mHasHighSamplingRateSensorsPermission = Optional.empty();
 
+    private String mBlockedPackageList;
+    private final Set<String> mBlockedApps =
+            Collections.newSetFromMap(new ConcurrentHashMap<>());
+
     private static ISensorClientListener sSensorClientListener;
 
     static {

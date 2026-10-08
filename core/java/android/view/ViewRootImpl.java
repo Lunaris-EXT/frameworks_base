@@ -14840,4 +14840,13 @@ public final class ViewRootImpl implements ViewParent,
         sDebugWrongThreadInit = enabled;
         return true;
     }
+
+    private boolean isThreeFingersSwipeActive() {
+        try {
+            return ActivityManager.getService().isThreeFingersSwipeActive();
+        } catch (RemoteException e) {
+            Log.e(mTag, "isThreeFingersSwipeActive exception", e);
+            return false;
+        }
+    }
 }

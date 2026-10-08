@@ -54,6 +54,7 @@ import android.provider.MediaStore.MediaColumns;
 import android.provider.Settings;
 import android.provider.Settings.System;
 import android.telecom.PhoneAccountHandle;
+import android.telephony.SubscriptionManager;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -1057,6 +1058,29 @@ public class RingtoneManager {
     public static void setActualDefaultRingtoneUri(Context context, int type, Uri ringtoneUri) {
         String setting = getSettingForType(type);
         setRingtoneUriForSetting(context, setting, ringtoneUri);
+    }
+
+    /**
+     * Gets the current default sound's {@link Uri} by slotId.
+     * @hide
+     */
+    public static Uri getActualDefaultRingtoneUriBySlot(Context context, int type, int slotId) {
+        String setting = getSettingForTypeBySlot(type, slotId);
+        return getRingtoneUriForSetting(context, setting);
+    }
+
+    /**
+     * Sets the {@link Uri} of the default sound by slotId for a given sound type.
+     * @hide
+     */
+    public static void setActualDefaultRingtoneUriBySlot(Context context, int type,
+                Uri ringtoneUri, int slotId) {
+        String setting = getSettingForTypeBySlot(type, slotId);
+        setRingtoneUriForSetting(context, setting, ringtoneUri);
+    }
+
+    private static String getSettingForType(int type) {
+        return getSettingForTypeBySlot(type, SubscriptionManager.getDefaultVoicePhoneId());
     }
 
     /**

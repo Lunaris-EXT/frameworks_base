@@ -26,9 +26,11 @@ import static com.android.internal.telephony.SmsConstants.MAX_USER_DATA_SEPTETS;
 import static com.android.internal.telephony.SmsConstants.MessageClass;
 
 import android.annotation.Nullable;
+import android.app.ActivityThread;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.content.res.Resources;
+import android.provider.Settings;
 import android.os.Build;
 import android.telephony.NetworkSecurityEvent;
 import android.telephony.PhoneNumberUtils;

@@ -116,9 +116,6 @@ public class NotificationRowIconView extends CachingIconView {
     }
 
     private boolean shouldUseAppIcon() {
-        if (!Flags.notificationsRedesignAppIcons()) {
-            return false;
-        }
         ContentResolver resolver = getContext().getContentResolver();
         return Settings.System.getInt(resolver, "notification_use_app_icons", 1) == 1;
     }

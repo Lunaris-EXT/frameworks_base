@@ -1070,4 +1070,68 @@ interface IActivityManager {
      * Unregisters the listener previously registered for ANR warning.
      */
     void unregisterAnrWarningListener(in IAnrWarningCallback callback);
+
+    /**
+     *  Should disable touch if three fingers swipe enabled
+     */
+    boolean isThreeFingersSwipeActive();
+    void setThreeFingersSwipeActive(boolean active);
+    void setThreeGestureStateActive(boolean active);
+
+    /**
+     *  Force full screen for devices with cutout
+     */
+    boolean shouldForceCutoutFullscreen(in String packageName);
+
+    void releaseMemory(int minAdj, int maxKillCount, boolean includeUIProcesses, boolean skipCamera);
+
+    void compactAllSystem();
+
+    boolean isSandboxAppLocked(String packageName);
+    int getSandboxAppLockState(String packageName);
+    int getSandboxAppLockStateForUser(String packageName, int userId);
+    boolean isSandboxPackageHidden(String packageName);
+    boolean isSandboxPackageHiddenFromLauncher(String packageName);
+    void addSandboxLockedApp(String packageName);
+    void removeSandboxLockedApp(String packageName);
+    void setSandboxPackageHidden(String packageName, boolean hidden);
+    void setSandboxPackageHiddenFromLauncher(String packageName, boolean hidden);
+    List<String> getSandboxLockedPackages();
+    List<String> getSandboxHiddenPackages();
+    List<String> getSandboxHiddenFromLauncherPackages();
+    List<String> getSandboxLockablePackages();
+    boolean isSandboxPackageLockable(String packageName);
+    void unlockSandboxApp(String packageName, int userId);
+    void promptSandboxUnlock(String packageName, int userId);
+    void registerSandboxAppLockStateListener(in IAppLockStateListener listener);
+    void unregisterSandboxAppLockStateListener(in IAppLockStateListener listener);
+    void registerSandboxAppSessionListener(in IAppSessionListener listener);
+    void unregisterSandboxAppSessionListener(in IAppSessionListener listener);
+    void registerSandboxHiddenNotificationListener(in IHiddenNotificationListener listener);
+    void unregisterSandboxHiddenNotificationListener(in IHiddenNotificationListener listener);
+    List<HiddenNotificationInfo> getSandboxHiddenNotifications();
+    void onSandboxHiddenNotificationPosted(in HiddenNotificationInfo info);
+    void onSandboxHiddenNotificationRemoved(String key);
+    boolean isSandboxPackageSandboxed(String packageName);
+    void addSandboxPackage(String packageName);
+    void removeSandboxPackage(String packageName);
+    List<String> getSandboxPackages();
+    void setSandboxRestrictedGids(String packageName, in int[] gids);
+    int[] getSandboxRestrictedGids(String packageName);
+    boolean isSandboxDataIsolationEnabled(String packageName);
+    void setSandboxDataIsolationEnabled(String packageName, boolean enabled);
+    boolean isSandboxSpoofSettingEnabled(String packageName, String settingKey);
+    void setSandboxSpoofSettingEnabled(String packageName, String settingKey, boolean enabled);
+    List<String> getSandboxEnabledSpoofSettings(String packageName);
+    String getSandboxSpoofedSetting(String callingPackage, String settingName);
+    
+    String getSpoofPifConfig();
+
+    String getSpoofGamePropsConfig();
+
+    String getSpoofTrickyStoreTarget();
+
+    String getSpoofTrickyStoreKeyBox();
+
+    String getSpoofTrickyStorePatch();
 }
