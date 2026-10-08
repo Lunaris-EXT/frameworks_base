@@ -36,6 +36,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ApplicationInfo;
+import android.database.ContentObserver;
+import android.net.Uri;
 import android.hardware.sensor.ISensorClientListener;
 import android.os.Build;
 import android.os.Handler;

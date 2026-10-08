@@ -258,9 +258,6 @@ public final class PermissionManager {
     private static String[] sLocationProviderPkgNames;
     private static String[] sLocationExtraPkgNames;
 
-    private static String[] sLocationProviderPkgNames;
-    private static String[] sLocationExtraPkgNames;
-
     /**
      * Creates a new instance.
      *

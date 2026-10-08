@@ -16,7 +16,7 @@
 
 package android.adb;
 
-import android.adbroot.IADBRootService;
+import android.adbroot.IAdbRootService;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
@@ -30,7 +30,7 @@ public class ADBRootService {
 
     private static final String ADB_ROOT_SERVICE = "adbroot_service";
 
-    private IADBRootService mService;
+    private IAdbRootService mService;
 
     private final IBinder.DeathRecipient mDeathRecipient = new IBinder.DeathRecipient() {
         @Override
@@ -42,7 +42,7 @@ public class ADBRootService {
         }
     };
 
-    private synchronized IADBRootService getService()
+    private synchronized IAdbRootService getService()
             throws RemoteException {
         if (mService != null) {
             return mService;
@@ -51,7 +51,7 @@ public class ADBRootService {
         final IBinder service = ServiceManager.getService(ADB_ROOT_SERVICE);
         if (service != null) {
             service.linkToDeath(mDeathRecipient, 0);
-            mService = IADBRootService.Stub.asInterface(service);
+            mService = IAdbRootService.Stub.asInterface(service);
             return mService;
         }
 
@@ -64,7 +64,7 @@ public class ADBRootService {
      */
     public boolean isSupported() {
         try {
-            final IADBRootService svc = getService();
+            final IAdbRootService svc = getService();
             if (svc != null) {
                 return svc.isSupported();
             }
@@ -79,7 +79,7 @@ public class ADBRootService {
      */
     public void setEnabled(boolean enable) {
         try {
-            final IADBRootService svc = getService();
+            final IAdbRootService svc = getService();
             if (svc != null) {
                 svc.setEnabled(enable);
             }
@@ -93,7 +93,7 @@ public class ADBRootService {
      */
     public boolean getEnabled() {
         try {
-            final IADBRootService svc = getService();
+            final IAdbRootService svc = getService();
             if (svc != null) {
                 return svc.getEnabled();
             }
