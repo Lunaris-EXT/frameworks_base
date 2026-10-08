@@ -988,4 +988,10 @@
     <color name="security_privacy_notification_tint_normal">#1A73E8</color>
     
     <color name="toast_color_background">@*android:color/system_neutral1_10</color>
+
+    <!-- Color for various surfaces related to system-wide blur -->
+    <color name="surface_effect_0">@color/customColorSurfaceEffect0</color>
+    <color name="surface_effect_1">@color/customColorSurfaceEffect1</color>
+    <color name="surface_effect_2">@color/customColorSurfaceEffect2</color>
+    <color name="surface_effect_3">@color/customColorSurfaceEffect3</color>
 </resources>
